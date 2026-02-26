@@ -1,0 +1,103 @@
+# =============================================================================
+# /etc/fail2ban/jail.local — RHEL 10 baseline jail configuration
+#
+# PURPOSE: Your primary jail configuration. Overrides jail.conf defaults.
+# USAGE:   Copy to /etc/fail2ban/jail.local and customise for your system.
+#
+# BEFORE YOU START:
+#   1. Replace YOUR_MANAGEMENT_IP_HERE with your actual management IP.
+#   2. Confirm your logtarget in fail2ban.local (SYSLOG vs file path).
+#   3. Run: sudo fail2ban-client -t   (to test syntax before reloading)
+#
+# Reference: Module 04 — Configuration Basics
+# =============================================================================
+
+[DEFAULT]
+# ---------------------------------------------------------------------------
+# Whitelist — ALWAYS include your own management IP(s) to avoid locking
+# yourself out. Add one entry per line (indented), or space-separated.
+# ---------------------------------------------------------------------------
+ignoreip = 127.0.0.1/8
+           ::1
+           YOUR_MANAGEMENT_IP_HERE
+           # 10.0.0.0/8        ← uncomment for private LAN ranges
+           # 192.168.0.0/16
+
+# ---------------------------------------------------------------------------
+# Timing defaults (applied to all jails unless overridden per-jail)
+# ---------------------------------------------------------------------------
+# How long a ban lasts
+bantime  = 1h
+
+# Sliding window: failures within this period count toward maxretry
+findtime = 10m
+
+# Number of failures within findtime before banning
+maxretry = 5
+
+# ---------------------------------------------------------------------------
+# Incremental banning (optional — uncomment to enable)
+# Each re-offence doubles the ban time, up to 1 week.
+# ---------------------------------------------------------------------------
+# bantime.increment  = true
+# bantime.multiplier = 2
+# bantime.maxtime    = 1w
+
+# ---------------------------------------------------------------------------
+# RHEL 10 + firewalld integration
+# firewallcmd-ipset  → adds IP to an ipset (efficient, recommended)
+# firewallcmd-allports → rich rule blocking all ports (use for recidive)
+# ---------------------------------------------------------------------------
+banaction          = firewallcmd-ipset
+banaction_allports = firewallcmd-allports
+
+# ---------------------------------------------------------------------------
+# Backend: systemd reads from journald (recommended for RHEL 10).
+# Change to 'auto' or 'polling' only if your service does NOT use journald.
+# ---------------------------------------------------------------------------
+backend  = systemd
+
+# Default action: ban only (no email alerts).
+# Use %(action_mwl)s to also send email with whois + log lines.
+action   = %(action_)s
+
+encoding = UTF-8
+
+# =============================================================================
+# JAILS
+# Each jail must set enabled = true; all other settings override [DEFAULT].
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# SSH — almost always the first jail to enable
+# ---------------------------------------------------------------------------
+[sshd]
+enabled  = true
+port     = ssh
+filter   = sshd
+# Stricter than DEFAULT: SSH brute-force is high risk
+bantime  = 24h
+maxretry = 3
+# backend and findtime inherited from DEFAULT
+
+# ---------------------------------------------------------------------------
+# Additional jails — uncomment and adjust as needed
+# ---------------------------------------------------------------------------
+
+# [nginx-http-auth]
+# enabled  = true
+# port     = http,https
+# filter   = nginx-http-auth
+# logpath  = /var/log/nginx/error.log
+
+# [postfix]
+# enabled  = true
+# port     = smtp,465,587
+# filter   = postfix
+# logpath  = /var/log/maillog
+
+# [vsftpd]
+# enabled  = true
+# port     = ftp,ftp-data,ftps,ftps-data
+# filter   = vsftpd
+# logpath  = /var/log/vsftpd.log

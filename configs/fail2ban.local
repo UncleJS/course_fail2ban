@@ -1,0 +1,28 @@
+# =============================================================================
+# /etc/fail2ban/fail2ban.local — Global daemon overrides for RHEL 10
+#
+# PURPOSE: Override fail2ban.conf defaults without editing the shipped file.
+# USAGE:   Copy to /etc/fail2ban/fail2ban.local and adjust as needed.
+#          Only include settings you want to change from the defaults.
+#
+# Reference: Module 04 — Configuration Basics
+# =============================================================================
+
+[Definition]
+
+# Log level: CRITICAL, ERROR, WARNING, NOTICE, INFO, DEBUG
+# Use INFO during initial setup; switch to WARNING or NOTICE in production.
+loglevel = INFO
+
+# Where fail2ban writes its own log.
+# SYSLOG  → journald (RHEL 10 default — query with journalctl -u fail2ban)
+# /var/log/fail2ban.log → flat file (required if using flat-file recidive)
+#
+# IMPORTANT: If you change this from SYSLOG to a file path, you must also
+# update your recidive jail config. See configs/jail.d/recidive.conf.
+logtarget = SYSLOG
+
+# How long (in seconds) ban history is kept in the SQLite database.
+# Must be LONGER than the recidive jail findtime (default: 12h = 43200s).
+# Default 86400 (24h) is safe; 7d (604800) gives more history for recidive.
+dbpurgeage = 7d
