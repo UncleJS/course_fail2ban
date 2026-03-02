@@ -1,4 +1,7 @@
 # Module 10 — Advanced Topics
+[![CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey)](./LICENSE.md)
+[![RHEL 10](https://img.shields.io/badge/platform-RHEL%2010-red)](https://access.redhat.com/products/red-hat-enterprise-linux)
+[![fail2ban](https://img.shields.io/badge/fail2ban-RHEL%2010-red)](https://access.redhat.com/products/red-hat-enterprise-linux)
 
 > **Level:** Advanced  
 > **Prerequisites:** [Module 09 — Custom Jails and Filters](./09-custom-jails-and-filters.md)  
@@ -1117,3 +1120,7 @@ to deep-dive into journal-based log monitoring, journalmatch tuning, and SELinux
 | ← Previous | Home | Next → |
 |-------------|------|---------|
 | [09 — Custom Jails & Filters](./09-custom-jails-and-filters.md) | [Course README](./README.md) | [11 — Systemd & Journald](./11-systemd-and-journald.md) |
+
+---
+
+*Licensed under [CC BY-NC-SA 4.0](LICENSE.md) · © 2026 UncleJS*

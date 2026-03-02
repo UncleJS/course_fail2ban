@@ -5,6 +5,10 @@
 > **Audience:** Complete beginners → Advanced administrators  
 > **Style:** Concept explanation + hands-on labs in every module
 
+[![CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey)](LICENSE.md)
+[![RHEL 10](https://img.shields.io/badge/platform-RHEL%2010-red)](https://access.redhat.com/products/red-hat-enterprise-linux)
+[![fail2ban](https://img.shields.io/badge/fail2ban-RHEL%2010-red)](https://access.redhat.com/products/red-hat-enterprise-linux)
+
 ---
 
 ## About This Course
@@ -148,3 +152,16 @@ firewall-cmd --info-ipset=fail2ban-sshd
 ---
 
 *Course maintained for RHEL 10 — Last reviewed: 2026-02-26*
+
+---
+
+## License
+
+This project is licensed under the
+Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0).
+
+https://creativecommons.org/licenses/by-nc-sa/4.0/
+
+---
+
+© 2026 UncleJS — Licensed under CC BY-NC-SA 4.0

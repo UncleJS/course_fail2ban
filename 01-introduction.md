@@ -1,4 +1,7 @@
 # Module 01 — Introduction to Fail2ban
+[![CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey)](./LICENSE.md)
+[![RHEL 10](https://img.shields.io/badge/platform-RHEL%2010-red)](https://access.redhat.com/products/red-hat-enterprise-linux)
+[![fail2ban](https://img.shields.io/badge/fail2ban-RHEL%2010-red)](https://access.redhat.com/products/red-hat-enterprise-linux)
 
 > **Level:** Beginner  
 > **Prerequisites:** None  
@@ -391,3 +394,7 @@ fail2ban on your RHEL 10 system.
 | ← Previous | Home | Next → |
 |-----------|------|--------|
 | — | [Course README](./README.md) | [02 — Installation](./02-installation.md) |
+
+---
+
+*Licensed under [CC BY-NC-SA 4.0](LICENSE.md) · © 2026 UncleJS*

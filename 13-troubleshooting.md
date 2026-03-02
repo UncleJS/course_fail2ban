@@ -1,4 +1,7 @@
 # Module 13 — Troubleshooting
+[![CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey)](./LICENSE.md)
+[![RHEL 10](https://img.shields.io/badge/platform-RHEL%2010-red)](https://access.redhat.com/products/red-hat-enterprise-linux)
+[![fail2ban](https://img.shields.io/badge/fail2ban-RHEL%2010-red)](https://access.redhat.com/products/red-hat-enterprise-linux)
 
 > **Level:** Advanced  
 > **Prerequisites:** [Module 11 — Systemd and Journald](./11-systemd-and-journald.md), [Module 12 — Healthchecks](./12-healthchecks.md)  
@@ -1621,3 +1624,7 @@ Expected: `Banned IP list:` is empty — `10.20.30.40` is ignored.
 | ← Previous | Home |
 |-------------|------|
 | [12 — Healthchecks](./12-healthchecks.md) | [Course README](./README.md) |
+
+---
+
+*Licensed under [CC BY-NC-SA 4.0](LICENSE.md) · © 2026 UncleJS*

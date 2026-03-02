@@ -68,3 +68,7 @@ sudo fail2ban-client status recidive
   (both default to at least 24h, so the 7d setting here is safe).
 - See **Module 04** for configuration hierarchy details.
 - See **Module 10** for recidive jail deep-dive.
+
+---
+
+*Licensed under [CC BY-NC-SA 4.0](LICENSE.md) · © 2026 UncleJS*

@@ -1,4 +1,7 @@
 # Module 07 — Actions
+[![CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey)](./LICENSE.md)
+[![RHEL 10](https://img.shields.io/badge/platform-RHEL%2010-red)](https://access.redhat.com/products/red-hat-enterprise-linux)
+[![fail2ban](https://img.shields.io/badge/fail2ban-RHEL%2010-red)](https://access.redhat.com/products/red-hat-enterprise-linux)
 
 > **Level:** Intermediate  
 > **Prerequisites:** [Module 06 — Filters](./06-filters.md)  
@@ -630,3 +633,7 @@ rich rules.
 | ← Previous | Home | Next → |
 |-----------|------|--------|
 | [06 — Filters](./06-filters.md) | [Course README](./README.md) | [08 — Firewalld Integration](./08-firewalld-integration.md) |
+
+---
+
+*Licensed under [CC BY-NC-SA 4.0](LICENSE.md) · © 2026 UncleJS*

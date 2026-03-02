@@ -1,4 +1,7 @@
 # Module 04 — Configuration Basics
+[![CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey)](./LICENSE.md)
+[![RHEL 10](https://img.shields.io/badge/platform-RHEL%2010-red)](https://access.redhat.com/products/red-hat-enterprise-linux)
+[![fail2ban](https://img.shields.io/badge/fail2ban-RHEL%2010-red)](https://access.redhat.com/products/red-hat-enterprise-linux)
 
 > **Level:** Beginner  
 > **Prerequisites:** [Module 03 — Core Concepts](./03-core-concepts.md)  
@@ -781,3 +784,7 @@ jails and learn to configure them for your services.
 | ← Previous | Home | Next → |
 |-----------|------|--------|
 | [03 — Core Concepts](./03-core-concepts.md) | [Course README](./README.md) | [05 — Jails](./05-jails.md) |
+
+---
+
+*Licensed under [CC BY-NC-SA 4.0](LICENSE.md) · © 2026 UncleJS*
