@@ -11,6 +11,19 @@
 
 ---
 
+## Table of Contents
+
+1. [About This Course](#about-this-course)
+2. [Prerequisites](#prerequisites)
+3. [Course Table of Contents](#course-table-of-contents)
+4. [Learning Path](#learning-path)
+5. [Key Files & Paths Reference](#key-files--paths-reference)
+6. [Quick Command Reference](#quick-command-reference)
+7. [Course Status](#course-status)
+8. [License](#license)
+
+---
+
 ## About This Course
 
 This course takes you from zero knowledge of fail2ban to confidently deploying,
@@ -24,6 +37,8 @@ Every module includes:
 - **Hands-on labs** with expected outputs
 - A **"Go to TOC"** link at the bottom of every section
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## Prerequisites
@@ -34,6 +49,8 @@ Every module includes:
 | Access | Root or sudo privileges |
 | Skills | Basic Linux CLI (ls, cd, cat, systemctl) |
 | Network | Internet access for EPEL package installation |
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -54,6 +71,8 @@ Every module includes:
 | [11](./11-systemd-and-journald.md) | Systemd & Journald | Advanced |
 | [12](./12-healthchecks.md) | Healthchecks | Advanced |
 | [13](./13-troubleshooting.md) | Troubleshooting | Advanced |
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -82,6 +101,8 @@ Every module includes:
                                                 [13 Troubleshooting]
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## Key Files & Paths Reference
@@ -98,6 +119,8 @@ Every module includes:
 | `/var/log/fail2ban.log` | Fail2ban activity log |
 | `/var/lib/fail2ban/fail2ban.sqlite3` | Ban persistence database |
 | `/var/run/fail2ban/fail2ban.sock` | Unix socket for client comms |
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -129,6 +152,8 @@ firewall-cmd --list-rich-rules
 firewall-cmd --info-ipset=fail2ban-sshd
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## Course Status
@@ -149,6 +174,8 @@ firewall-cmd --info-ipset=fail2ban-sshd
 | 12 — Healthchecks | ✅ Complete |
 | 13 — Troubleshooting | ✅ Complete |
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 *Course maintained for RHEL 10 — Last reviewed: 2026-02-26*
@@ -162,6 +189,8 @@ Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-N
 
 https://creativecommons.org/licenses/by-nc-sa/4.0/
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
-© 2026 UncleJS — Licensed under CC BY-NC-SA 4.0
+*Licensed under [CC BY-NC-SA 4.0](LICENSE.md) · © 2026 UncleJS*

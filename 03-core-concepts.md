@@ -651,6 +651,8 @@ In this module you learned:
 Proceed to **[Module 04 — Configuration Basics](./04-configuration-basics.md)**
 to start writing your own configuration files.
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 | ← Previous | Home | Next → |

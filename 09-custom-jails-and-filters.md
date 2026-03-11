@@ -478,6 +478,8 @@ sudo journalctl -u fail2ban.service -n 20 --no-pager
 | **Part 1** | 1–8 | Writing and testing custom filters: anatomy, failregex, HOST placeholder, fail2ban-regex, common pitfalls |
 | **Part 2** | 9–15 | Custom jails, custom actions, chaining, full pipeline testing, real-world examples |
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 9. Anatomy of a Custom Jail

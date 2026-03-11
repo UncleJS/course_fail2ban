@@ -728,6 +728,8 @@ In this module you learned:
 Proceed to **[Module 09 — Custom Jails & Filters](./09-custom-jails-and-filters.md)**
 to learn how to protect any service by writing your own jails and filters.
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 | <- Previous | Home | Next -> |

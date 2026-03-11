@@ -389,6 +389,8 @@ In this module you learned:
 Proceed to **[Module 02 — Installation](./02-installation.md)** to install
 fail2ban on your RHEL 10 system.
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 | ← Previous | Home | Next → |

@@ -1,0 +1,33 @@
+# ── Environment / secrets ────────────────────────────────────────────────────
+.env
+.env.*
+.env.example
+
+# ── Config files containing credentials ──────────────────────────────────────
+# Patterns that suggest stored credentials / passwords
+*credential*
+*credentials*
+*password*
+*passwd*
+*secret*
+*secrets*
+
+# Specific config overrides that may hold real passwords / keys
+configs/jail.local
+configs/fail2ban.local
+jail.local.private
+fail2ban.local.private
+
+# ── OS / editor noise ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Build / runtime artifacts ─────────────────────────────────────────────────
+*.pyc
+__pycache__/
+*.log

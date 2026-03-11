@@ -623,6 +623,8 @@ In this module you learned:
 Proceed to **[Module 06 — Filters](./06-filters.md)** to understand how the
 detection rules work and how to test and tune them.
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 | ← Previous | Home | Next → |

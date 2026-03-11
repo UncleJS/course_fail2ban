@@ -642,6 +642,8 @@ In this module you learned:
 Proceed to **[Module 07 — Actions](./07-actions.md)** to understand how fail2ban
 tells firewalld to block offending IPs.
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 | ← Previous | Home | Next → |

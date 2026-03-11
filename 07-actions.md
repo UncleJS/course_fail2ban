@@ -628,6 +628,8 @@ Proceed to **[Module 08 — Firewalld Integration](./08-firewalld-integration.md
 for a deep dive into how fail2ban interacts with firewalld zones, ipsets, and
 rich rules.
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 | ← Previous | Home | Next → |

@@ -640,6 +640,8 @@ In this module you:
 Proceed to **[Module 03 — Core Concepts](./03-core-concepts.md)** to understand
 the terminology and building blocks you will configure throughout this course.
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 | ← Previous | Home | Next → |
