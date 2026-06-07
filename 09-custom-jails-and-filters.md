@@ -27,6 +27,9 @@
 14. [Real-World Example: Custom Web App](#14-real-world-example-custom-web-app)
 15. [Real-World Example: Custom SSH Wrapper](#15-real-world-example-custom-ssh-wrapper)
 16. [Lab 09 — Build and Test a Custom Jail from Scratch](#lab-09--build-and-test-a-custom-jail-from-scratch)
+17. [Summary](#summary)
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -94,9 +97,6 @@ A fail2ban filter file is an INI-format file with a single required section `[De
 ### Minimal structure
 
 ```ini
-
-[↑ Back to TOC](#table-of-contents)
-
 # /etc/fail2ban/filter.d/myapp.conf
 
 [Definition]
@@ -141,6 +141,8 @@ ignoreregex = ^127\.0\.0\.1
 - **Do not use** `^.*` at the start — it makes regex O(n²) and causes ReDoS
 - **Always anchor** to `<HOST>` or a known log prefix
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 4. Writing a failregex from Scratch
@@ -148,9 +150,6 @@ ignoreregex = ^127\.0\.0\.1
 ### Step 1 — Collect real log lines
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # View last 50 lines of your application log
 sudo tail -50 /var/log/myapp/access.log
 
@@ -210,7 +209,11 @@ For non-standard timestamps, set `datepattern` in `[Init]`:
 datepattern = %%Y-%%m-%%d %%H:%%M:%%S
 ```
 
-Note: In `.conf` files, `%` must be doubled to `%%`. In `.local` files it does not need doubling — this is a common source of confusion.
+Note: literal `%` characters must be doubled to `%%` in fail2ban config files
+(both `.conf` and `.local` — they use the same parser), because a single `%`
+starts the `%(variable)s` interpolation syntax.
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -353,9 +356,6 @@ sudo fail2ban-regex -D /var/log/myapp/access.log /etc/fail2ban/filter.d/myapp.co
 ### Common log field patterns
 
 ```ini
-
-[↑ Back to TOC](#table-of-contents)
-
 # Apache/Nginx style: IP - - [timestamp] "METHOD /path HTTP/x.x" STATUS
 failregex = ^<HOST> - \S+ \[.*?\] "\w+ \S+ HTTP/\d\.\d" 40[13]
 
@@ -421,6 +421,8 @@ Fail2ban regex is case-sensitive by default. Use `(?i)` for case-insensitive mat
 failregex = (?i)login failed from <HOST>
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 8. Placing Your Filter File
@@ -452,21 +454,16 @@ failregex = (?i)login failed from <HOST>
 ### Verify fail2ban can read your filter
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Reload and check for errors
 sudo fail2ban-client reload
 
 # Check the log for parse errors
 sudo journalctl -u fail2ban.service -n 20 --no-pager
 ```
- 
----
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
-
-## ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Part 2 — Custom Jails, Actions & Full Pipelines
 
@@ -494,9 +491,6 @@ A jail ties together:
 ### Minimal custom jail
 
 ```ini
-
-[↑ Back to TOC](#table-of-contents)
-
 # /etc/fail2ban/jail.d/myapp.conf
 
 [myapp]
@@ -551,6 +545,8 @@ port        = http,https
 ignoreip    = 127.0.0.1/8 ::1 10.0.0.0/8
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 10. Flat-File vs. Systemd-Journal Jails
@@ -574,9 +570,6 @@ backend  = auto          # auto-detects inotify or polling
 enabled       = true
 filter        = myapp-systemd
 backend       = systemd  # MUST be set to systemd
-
-[↑ Back to TOC](#table-of-contents)
-
 # No logpath — reads from journald
 ```
 
@@ -609,6 +602,8 @@ sudo journalctl -u myapp.service -o json | head -5 | python3 -m json.tool | grep
 
 Not directly supported. Create two jails with different names that share the same filter, or pre-process the journal to a flat file with a systemd service.
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 11. Writing a Custom Action
@@ -618,9 +613,6 @@ Most of the time you will reuse `firewallcmd-ipset` or `firewallcmd-allports`. B
 ### Action file anatomy
 
 ```ini
-
-[↑ Back to TOC](#table-of-contents)
-
 # /etc/fail2ban/action.d/mywebhook.conf
 
 [Definition]
@@ -675,6 +667,8 @@ action    = %(banaction)s[name=%(__name__)s, bantime="%(bantime)s", port="%(port
             mywebhook[name=%(__name__)s]
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 12. Chaining Multiple Actions
@@ -699,9 +693,6 @@ action    = firewallcmd-ipset[name=%(__name__)s, bantime="%(bantime)s",
 Fail2ban provides shortcut macros in `jail.conf` for common combinations. These are defined in the `[DEFAULT]` section:
 
 ```ini
-
-[↑ Back to TOC](#table-of-contents)
-
 # These are defined in jail.conf [DEFAULT]:
 action_     = %(banaction)s[...]                  # ban only
 action_mw   = %(banaction)s[...] + sendmail-whois # ban + email with whois
@@ -716,6 +707,8 @@ action = %(action_mw)s
 ```
 
 > **RHEL 10 note:** Email actions require a working MTA (Postfix). Confirm with `echo "test" | mail -s test root` before relying on email notifications.
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -753,9 +746,6 @@ sudo journalctl -u fail2ban.service -n 30 --no-pager
 ### Step 2 — Inject a test failure
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Write a fake failure line to the log
 sudo bash -c 'echo "2026-02-15 14:22:01 [WARN] Login failed for user '"'"'admin'"'"' from 203.0.113.1" >> /var/log/myapp/access.log'
 ```
@@ -775,8 +765,8 @@ done
 # Check jail status
 sudo fail2ban-client status myapp
 
-# Check firewalld ipset
-sudo firewall-cmd --ipset=f2b-myapp --get-entries
+# Check the kernel ipset (firewallcmd-ipset action)
+sudo ipset list f2b-myapp
 
 # Or use fail2ban-client directly
 sudo fail2ban-client get myapp banned
@@ -801,6 +791,8 @@ fail2ban.actions[...]: NOTICE  [myapp] Ban 203.0.113.1
 fail2ban.actions[...]: NOTICE  [myapp] Unban 203.0.113.1
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 14. Real-World Example: Custom Web App
@@ -818,9 +810,6 @@ A custom Python/Flask web app logs to `/var/log/webapp/app.log` with this format
 ### Filter file
 
 ```ini
-
-[↑ Back to TOC](#table-of-contents)
-
 # /etc/fail2ban/filter.d/webapp.conf
 
 [Definition]
@@ -862,6 +851,8 @@ sudo fail2ban-client reload
 sudo fail2ban-client status webapp
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 15. Real-World Example: Custom SSH Wrapper
@@ -882,9 +873,6 @@ Feb 15 14:22:05 server sshwrapper[1234]: ALLOW user=alice from=10.0.0.5
 ### Filter file
 
 ```ini
-
-[↑ Back to TOC](#table-of-contents)
-
 # /etc/fail2ban/filter.d/sshwrapper.conf
 
 [Definition]
@@ -923,6 +911,8 @@ Inject a test journal entry:
 ```bash
 sudo systemd-cat -t sshwrapper echo "DENY user=testuser from=192.0.2.1"
 ```
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -1098,12 +1088,13 @@ Expected:
 ```
 
 ```bash
-# In firewalld
-sudo firewall-cmd --ipset=f2b-labapp --get-entries
+# In the kernel ipset
+sudo ipset list f2b-labapp | sed -n '/Members:/,$p'
 ```
 
 Expected:
 ```
+Members:
 192.0.2.55
 ```
 
@@ -1111,9 +1102,10 @@ Expected:
 
 ### Part E — Verify Blocked and Clean Up
 
-**12. Confirm the firewalld rule:**
+**12. Confirm the firewall rule that matches the set:**
 
 ```bash
+sudo firewall-cmd --direct --get-all-rules | grep f2b-labapp
 sudo nft list ruleset | grep -A5 "f2b-labapp"
 ```
 
@@ -1123,13 +1115,13 @@ sudo nft list ruleset | grep -A5 "f2b-labapp"
 sudo fail2ban-client set labapp unbanip 192.0.2.55
 ```
 
-**14. Verify removal from firewalld:**
+**14. Verify removal from the ipset:**
 
 ```bash
-sudo firewall-cmd --ipset=f2b-labapp --get-entries
+sudo ipset test f2b-labapp 192.0.2.55
 ```
 
-Expected: empty output.
+Expected: `192.0.2.55 is NOT in set f2b-labapp.`
 
 **15. Check the full ban/unban cycle in the log:**
 
@@ -1152,7 +1144,7 @@ fail2ban.actions[...]: NOTICE  [labapp] Unban 192.0.2.55
 | A | Created log infrastructure | Log directory and test scripts |
 | B | Wrote filter + tested with fail2ban-regex | 3 failures matched, 1 success missed |
 | C | Wrote jail configuration | Jail active in fail2ban status |
-| D | Triggered ban with 6 failures | IP appeared in fail2ban status and firewalld ipset |
+| D | Triggered ban with 6 failures | IP appeared in fail2ban status and the kernel ipset |
 | E | Unbanned manually | IP removed from ipset |
 
 **You have successfully built a custom jail and filter from scratch.**
@@ -1163,10 +1155,27 @@ fail2ban.actions[...]: NOTICE  [labapp] Unban 192.0.2.55
 
 - [ ] My custom filter file passes `fail2ban-regex` with the correct match count
 - [ ] `fail2ban-client status labapp` shows the jail as active with `backend = auto`
-- [ ] After 6 failures (over 4 triggers), the test IP appeared in `fail2ban-client status labapp`
-- [ ] The ban appeared in `firewall-cmd --ipset=f2b-labapp --get-entries`
+- [ ] After 6 failures (exceeding `maxretry = 5`), the test IP appeared in `fail2ban-client status labapp`
+- [ ] The ban appeared in `ipset list f2b-labapp`
 - [ ] `fail2ban-client set labapp unbanip <IP>` successfully cleared the ban
 - [ ] I know where to put custom filters (`filter.d/`) and jail configs (`jail.d/`) and why I use `.local` overrides
+
+[↑ Back to TOC](#table-of-contents)
+
+---
+
+## Summary
+
+In this module you learned:
+
+- **When to write custom filters and jails**: proprietary log formats, internal APIs, legacy apps
+- The **development workflow**: collect samples → write regex → test with `fail2ban-regex` → deploy → verify
+- **Filter file anatomy**: `[INCLUDES]`, `[Definition]`, `[Init]` and the failregex/ignoreregex rules
+- The **`<HOST>` placeholder** in depth, including the named `(?P<host>...)` alternative
+- **Common regex pitfalls**: ReDoS, unescaped specials, timestamps, case sensitivity
+- **Jail anatomy** and the difference between **flat-file** and **systemd-journal** jails
+- How to write and chain **custom actions** (webhooks, custom logging) alongside the firewall ban
+- How to test the **full pipeline end-to-end** with injected failures
 
 ### Next Steps
 

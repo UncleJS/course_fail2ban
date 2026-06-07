@@ -28,6 +28,9 @@
 15. [Recidive Jail Not Triggering](#15-recidive-jail-not-triggering)
 16. [Diagnostic Command Cheat Sheet](#16-diagnostic-command-cheat-sheet)
 17. [Lab 13 — Multi-Scenario Troubleshooting Lab](#lab-13--multi-scenario-troubleshooting-lab)
+18. [Summary](#summary)
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -54,9 +57,6 @@ Start at **Layer 1** and work upward. Most problems are at layers 1 or 2.
 ### First three commands to run
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # 1. Is fail2ban alive?
 sudo fail2ban-client ping
 
@@ -77,6 +77,8 @@ sudo journalctl -u fail2ban.service -n 100 --no-pager
 sudo fail2ban-client set loglevel NOTICE
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 2. Fail2ban Will Not Start
@@ -91,9 +93,6 @@ Job for fail2ban.service failed. See 'journalctl -xe' for details.
 ### Diagnosis
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Step 1: Check systemd status
 sudo systemctl status fail2ban.service
 
@@ -185,6 +184,8 @@ ModuleNotFoundError: No module named 'systemd'
 sudo dnf reinstall fail2ban fail2ban-firewalld
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 3. Fail2ban Starts But Crashes Immediately
@@ -195,9 +196,6 @@ Fail2ban shows `active (running)` briefly, then shows `failed`:
 
 ```bash
 systemctl status fail2ban.service
-
-[↑ Back to TOC](#table-of-contents)
-
 # ● fail2ban.service - Fail2Ban Service
 #    Active: failed (Result: exit-code)
 ```
@@ -246,6 +244,8 @@ sudo fail2ban-regex /dev/null /etc/fail2ban/filter.d/myapp.conf
 
 If this outputs a Python traceback with `re.error`, the regex is invalid.
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 4. A Jail Is Not Activating
@@ -254,9 +254,6 @@ If this outputs a Python traceback with `re.error`, the regex is invalid.
 
 ```bash
 sudo fail2ban-client status
-
-[↑ Back to TOC](#table-of-contents)
-
 # Jail list: sshd
 # (expected jail 'myapp' is not listed)
 ```
@@ -324,6 +321,8 @@ grep "backend" /etc/fail2ban/jail.d/myapp.conf
 grep "journalmatch" /etc/fail2ban/filter.d/myapp.conf
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 5. Bans Are Not Firing
@@ -335,9 +334,6 @@ The jail is active, failures are happening, but `Currently banned: 0` and `Total
 ### Diagnosis
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Step 1: Is the failure counter incrementing?
 sudo fail2ban-client status sshd
 # Watch: Currently failed should go up
@@ -408,6 +404,8 @@ sudo systemctl enable --now chronyd
 sudo chronyc makestep
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 6. Regex Is Not Matching Log Lines
@@ -419,9 +417,6 @@ sudo chronyc makestep
 ### Diagnosis workflow
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Step 1: Test the filter against the actual log
 sudo fail2ban-regex /var/log/myapp/auth.log /etc/fail2ban/filter.d/myapp.conf
 
@@ -497,31 +492,38 @@ sudo journalctl | grep -i "myservice" | tail -5
 sudo systemctl list-units | grep -i "myservice"
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 7. Firewalld Integration Failures
 
 ### Symptom
 
-Bans show in `fail2ban-client status` but the IP is not in the firewalld ipset. Or ban actions show errors in the log.
+Bans show in `fail2ban-client status` but the IP is not in the kernel ipset
+(or not in the rich rules, with the EPEL default action). Or ban actions show
+errors in the log.
 
 ### Diagnosis
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Check for action errors in fail2ban log
 sudo journalctl -u fail2ban.service --since "30 minutes ago" --no-pager | grep -i "error\|failed\|action"
 
 # Check firewalld state
 sudo firewall-cmd --state
 
-# List all fail2ban ipsets
-sudo firewall-cmd --get-ipsets | tr ' ' '\n' | grep f2b
+# List all fail2ban ipsets (firewallcmd-ipset action)
+sudo ipset list -n | grep f2b
 
 # Check specific ipset entries
-sudo firewall-cmd --ipset=f2b-sshd --get-entries
+sudo ipset list f2b-sshd
+
+# Check the enforcement rule that matches the set
+sudo firewall-cmd --direct --get-all-rules | grep f2b-sshd
+
+# Rich-rules action instead? Check:
+sudo firewall-cmd --list-rich-rules
 ```
 
 ### Common causes and fixes
@@ -533,9 +535,12 @@ sudo systemctl start firewalld.service
 sudo fail2ban-client reload
 ```
 
-#### Cause B — firewalld was restarted after fail2ban
+#### Cause B — firewalld was restarted (or reloaded) after fail2ban
 
-When firewalld restarts, all runtime rules (including ipsets and their entries) are cleared. Fail2ban does not automatically re-apply bans in this scenario.
+When firewalld restarts or reloads, all runtime rules are cleared — including
+fail2ban's rich rules and `--direct` rules. (Kernel ipsets survive, but the
+rule that matches them is gone, so the bans are no longer enforced.) Fail2ban
+does not automatically re-apply its rules in this scenario.
 
 **Check:**
 ```bash
@@ -570,20 +575,20 @@ After=firewalld.service
 sudo systemctl daemon-reload
 ```
 
-#### Cause C — Wrong firewalld zone
+#### Cause C — Wrong firewalld zone (rich-rules action)
 
-By default, fail2ban applies bans to the `public` zone. If your service is in a different zone, the ban has no effect on that service.
+With the `firewallcmd-rich-rules` action, bans are added to the **default
+zone**. If your service is reachable through an interface in a different zone,
+the ban has no effect on that traffic. (The `--direct`-based actions are not
+affected — direct rules apply before zone processing.)
 
 ```bash
 # Check which zone your network interface is in
 sudo firewall-cmd --get-active-zones
 
-# Check which zone the service is in
-sudo firewall-cmd --list-all --zone=public
-sudo firewall-cmd --list-all --zone=trusted
-
-# Override the zone in the action:
-# banaction = firewallcmd-ipset[zone=internal]
+# Check where the ban rich rules actually landed
+sudo firewall-cmd --list-rich-rules
+sudo firewall-cmd --zone=trusted --list-rich-rules
 ```
 
 #### Cause D — SELinux blocking firewall-cmd execution
@@ -594,7 +599,7 @@ See **Section 10** for SELinux-specific troubleshooting.
 
 ```bash
 # Check ipset entry count
-sudo firewall-cmd --ipset=f2b-sshd --get-entries | wc -l
+sudo ipset list f2b-sshd -terse | grep "Number of entries"
 
 # Default maxelem is 65536
 # If near the limit, raise it:
@@ -603,25 +608,24 @@ sudo firewall-cmd --ipset=f2b-sshd --get-entries | wc -l
 # maxelem = 131072
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 8. IPs Are Not Being Unbanned
 
 ### Symptom
 
-Banned IPs remain in the firewalld ipset after their `bantime` has expired. Or `fail2ban-client set jail unbanip IP` does not work.
+Banned IPs remain in the kernel ipset after their `bantime` has expired. Or `fail2ban-client set jail unbanip IP` does not work.
 
 ### Diagnosis
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Check if IP is still shown as banned in fail2ban
 sudo fail2ban-client status sshd | grep "Banned IP list"
 
-# Check if IP is in the firewalld ipset
-sudo firewall-cmd --ipset=f2b-sshd --get-entries | grep "203.0.113.45"
+# Check if IP is in the kernel ipset
+sudo ipset test f2b-sshd 203.0.113.45
 
 # Manual unban
 sudo fail2ban-client set sshd unbanip 203.0.113.45
@@ -654,14 +658,17 @@ for jail in $(sudo fail2ban-client status | grep "Jail list" | sed 's/.*Jail lis
 done
 ```
 
-#### Cause C — Unban action failed (firewall-cmd error)
+#### Cause C — Unban action failed (firewall/ipset error)
 
 ```bash
 # Check for unban errors in the log
 sudo journalctl -u fail2ban.service --since "30 minutes ago" | grep -i "unban\|error"
 
-# Manual firewalld removal
-sudo firewall-cmd --ipset=f2b-sshd --remove-entry=203.0.113.45
+# Manual removal from the kernel ipset
+sudo ipset del f2b-sshd 203.0.113.45
+
+# (rich-rules action: remove the rich rule instead)
+# sudo firewall-cmd --remove-rich-rule="rule family='ipv4' source address='203.0.113.45' port port='22' protocol='tcp' reject type='icmp-port-unreachable'"
 ```
 
 #### Cause D — fail2ban restarted while IP was banned (database check)
@@ -676,6 +683,8 @@ sudo sqlite3 /var/lib/fail2ban/fail2ban.sqlite3 \
    ORDER BY timeofban DESC LIMIT 5;"
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 9. False Positives — Legitimate IPs Getting Banned
@@ -687,9 +696,6 @@ A user, monitoring system, or internal server is getting banned.
 ### Immediate action — unban the IP
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Find which jail banned the IP
 for jail in $(sudo fail2ban-client status | grep "Jail list" | sed 's/.*Jail list:\s*//' | tr ', ' ' '); do
   BANNED=$(sudo fail2ban-client status "$jail" 2>/dev/null | grep "Banned IP list")
@@ -743,6 +749,8 @@ maxretry = 10    # Give legitimate users more chances
 findtime = 5m
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 10. SELinux Denials Blocking Bans
@@ -754,9 +762,6 @@ Fail2ban appears to work (jail status shows bans) but firewalld ipsets are empty
 ### Diagnosis
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Step 1: Check for AVC denials
 sudo ausearch -m avc -ts recent --no-pager | grep "fail2ban\|firewall"
 
@@ -811,6 +816,8 @@ sudo restorecon -Rv /var/log/myapp/
 ls -Z /var/log/myapp/
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 11. Performance and High CPU Usage
@@ -822,17 +829,14 @@ ls -Z /var/log/myapp/
 ### Diagnosis
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Check CPU usage
 top -p $(pgrep fail2ban-server)
 # Or
 ps aux | grep fail2ban
 
 # Check how many entries are in ipsets
-sudo firewall-cmd --get-ipsets | tr ' ' '\n' | grep f2b | while read ipset; do
-  echo "$ipset: $(sudo firewall-cmd --ipset="$ipset" --get-entries | wc -l) entries"
+sudo ipset list -n | grep f2b | while read s; do
+  echo "$s: $(sudo ipset list "$s" -terse | sed -n 's/^Number of entries: //p') entries"
 done
 ```
 
@@ -886,6 +890,8 @@ sudo du -h /var/lib/fail2ban/fail2ban.sqlite3
 # dbpurgeage = 7d
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 12. Log Rotation Issues
@@ -903,9 +909,6 @@ With `backend = polling`, fail2ban may miss entries written between the rotation
 ### Diagnosis
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Check which file(s) fail2ban is watching
 sudo fail2ban-client status myapp | grep "File list"
 
@@ -965,6 +968,8 @@ sudo tee /etc/logrotate.d/fail2ban > /dev/null << 'EOF'
 EOF
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 13. Email Notification Failures
@@ -976,9 +981,6 @@ Email actions are configured but emails are not arriving.
 ### Diagnosis
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Step 1: Test if MTA is working
 echo "Test from $(hostname)" | mail -s "fail2ban test" admin@example.com
 
@@ -1029,6 +1031,8 @@ nc -zv smtp.example.com 25
 sudo firewall-cmd --list-all | grep "25\|smtp"
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 14. Database and Persistence Issues
@@ -1040,9 +1044,6 @@ After fail2ban restarts, previously banned IPs are not re-banned. Or fail2ban re
 ### Diagnosis
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Check database file
 sudo ls -la /var/lib/fail2ban/fail2ban.sqlite3
 
@@ -1103,6 +1104,8 @@ sudo chown root:root /var/lib/fail2ban/fail2ban.sqlite3
 sudo chmod 600 /var/lib/fail2ban/fail2ban.sqlite3
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 15. Recidive Jail Not Triggering
@@ -1114,9 +1117,6 @@ An IP is being banned repeatedly but the recidive jail never fires a long-term b
 ### Diagnosis
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Check recidive jail is active
 sudo fail2ban-client status recidive
 
@@ -1133,11 +1133,18 @@ sudo grep "Ban" /var/log/fail2ban.log | tail -10
 
 ### Common causes and fixes
 
-#### Cause A — fail2ban is not logging to a flat file
+#### Cause A — recidive's log source doesn't match fail2ban's logtarget
 
-The recidive filter needs to read fail2ban's ban log lines. If fail2ban logs to journal only, the recidive filter (which looks at a flat file by default) sees nothing.
+The recidive filter needs to read fail2ban's ban log lines. The shipped
+`recidive` filter watches the flat file `/var/log/fail2ban.log` — but on
+RHEL 10 fail2ban logs to the journal by default (`SYSTEMD-JOURNAL`), so the
+flat-file recidive jail sees nothing.
 
-**Fix:** Configure fail2ban to write to a flat file AND configure recidive to read it:
+**Fix (preferred):** use the journald-based recidive setup from Module 10
+Option A (`filter = recidive-systemd`, `backend = systemd`).
+
+**Fix (alternative):** switch fail2ban to flat-file logging AND keep the
+shipped flat-file recidive jail:
 
 ```ini
 # /etc/fail2ban/fail2ban.local
@@ -1184,6 +1191,8 @@ sudo grep "Ban" /var/log/fail2ban.log | head -3
 
 If the log format differs, update the recidive filter's `failregex` in `/etc/fail2ban/filter.d/recidive.local`.
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 16. Diagnostic Command Cheat Sheet
@@ -1191,9 +1200,6 @@ If the log format differs, update the recidive filter's `failregex` in `/etc/fai
 ### Service status
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Is fail2ban running?
 sudo fail2ban-client ping
 
@@ -1258,22 +1264,28 @@ sudo fail2ban-regex systemd-journal /etc/fail2ban/filter.d/sshd.conf
 sudo fail2ban-regex 'LOGLINE' 'REGEX'
 ```
 
-### Firewalld inspection
+### Firewall inspection
 
 ```bash
-# List all fail2ban ipsets
-sudo firewall-cmd --get-ipsets | tr ' ' '\n' | grep f2b
+# List all fail2ban ipsets (firewallcmd-ipset action)
+sudo ipset list -n | grep f2b
 
 # Show entries in an ipset
-sudo firewall-cmd --ipset=f2b-sshd --get-entries
+sudo ipset list f2b-sshd
+
+# Check one IP in an ipset
+sudo ipset test f2b-sshd 203.0.113.45
 
 # Count entries in an ipset
-sudo firewall-cmd --ipset=f2b-sshd --get-entries | wc -l
+sudo ipset list f2b-sshd -terse | grep "Number of entries"
 
-# List rich rules (allports bans)
+# Show the direct rules (ipset + allports actions)
+sudo firewall-cmd --direct --get-all-rules
+
+# List rich rules (EPEL default rich-rules action)
 sudo firewall-cmd --list-rich-rules
 
-# View nftables (underlying firewalld rules)
+# View nftables (underlying kernel rules)
 sudo nft list ruleset | grep -A5 "f2b"
 ```
 
@@ -1347,6 +1359,8 @@ sudo ausearch -m avc -ts recent | audit2why
 # fail2ban's SELinux domain
 ps -eZ | grep fail2ban
 ```
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -1491,7 +1505,7 @@ sudo fail2ban-client reload
 
 ---
 
-### Scenario 3 — firewalld ipset Missing After Restart
+### Scenario 3 — Ban Not Enforced After firewalld Restart
 
 **Setup (simulate firewalld restart):**
 
@@ -1502,19 +1516,26 @@ sudo labapp-fail.sh 192.0.2.201 6
 sleep 5
 echo "Before firewalld restart:"
 sudo fail2ban-client status labapp | grep "Banned IP"
-sudo firewall-cmd --ipset=f2b-labapp --get-entries 2>/dev/null || echo "ipset does not exist yet"
+sudo firewall-cmd --direct --get-all-rules | grep f2b-labapp || echo "no enforcement rule"
 
-# Now restart firewalld (this clears runtime rules)
+# Now restart firewalld (this clears all runtime rules)
 sudo systemctl restart firewalld.service
 sleep 2
 
 echo "After firewalld restart (before fail2ban restart):"
-sudo firewall-cmd --ipset=f2b-labapp --get-entries 2>/dev/null || echo "ipset gone — rules cleared"
+sudo ipset list f2b-labapp | sed -n '/Members:/,$p'   # ipset + entries SURVIVE
+sudo firewall-cmd --direct --get-all-rules | grep f2b-labapp \
+  || echo "enforcement rule GONE — ban no longer enforced"
 ```
 
-**Your task:** Diagnose why `192.0.2.201` is still shown as banned in fail2ban but NOT present in the firewalld ipset. Fix it.
+**Your task:** Diagnose why `192.0.2.201` is still shown as banned in fail2ban
+(and still sits in the kernel ipset) but is **no longer actually blocked**.
+Fix it.
 
-**Hint:** When firewalld restarts, it clears all runtime rules. The fix is to restart fail2ban so it re-applies bans from its database.
+**Hint:** When firewalld restarts, it clears all runtime rules — including the
+`--direct` rule that matches the `f2b-labapp` ipset. The set itself survives,
+but nothing references it. The fix is to restart fail2ban so its `actionstart`
+re-creates the rule and re-applies bans from the database.
 
 **Fix:**
 ```bash
@@ -1522,11 +1543,13 @@ sudo systemctl restart fail2ban.service
 sleep 3
 
 echo "After fail2ban restart:"
-sudo firewall-cmd --ipset=f2b-labapp --get-entries 2>/dev/null
+sudo firewall-cmd --direct --get-all-rules | grep f2b-labapp
+sudo ipset test f2b-labapp 192.0.2.201
 sudo fail2ban-client status labapp | grep "Banned IP"
 ```
 
-Expected: `192.0.2.201` appears in both places again.
+Expected: the enforcement rule is back, and `192.0.2.201` is in the set and
+shown as banned.
 
 **Cleanup:**
 ```bash
@@ -1571,7 +1594,7 @@ maxretry            = 5
 findtime            = 5m
 bantime             = 10m
 bantime.increment   = true
-bantime.factor      = 2
+bantime.factor      = 1
 bantime.maxtime     = 30m
 port                = http,https
 ignoreip            = 127.0.0.1/8 ::1 10.0.0.0/8
@@ -1599,7 +1622,7 @@ Expected: `Banned IP list:` is empty — `10.20.30.40` is ignored.
 |----------|---------|---------------|
 | 1 | Jail not activating — config syntax error | `journalctl`, config file inspection |
 | 2 | Bans not firing — regex mismatch | `fail2ban-regex --print-all-missed` |
-| 3 | Bans exist in fail2ban but not firewalld | Understanding firewalld restart behavior |
+| 3 | Bans exist in fail2ban but are not enforced at the firewall | Understanding firewalld restart behavior |
 | 4 | False positive — legitimate IP banned | `unbanip`, `ignoreip` configuration |
 
 **You have completed the full fail2ban troubleshooting module.**
@@ -1610,12 +1633,36 @@ Expected: `Banned IP list:` is empty — `10.20.30.40` is ignored.
 
 - [ ] I can diagnose a jail-not-active problem using `journalctl -u fail2ban` and `fail2ban-client -t`
 - [ ] I know how to use `fail2ban-regex --print-all-missed` to debug a filter that matches nothing
-- [ ] I understand why bans disappear from firewalld after `firewall-cmd --reload` and how to recover them
+- [ ] I understand why ban enforcement disappears after `firewall-cmd --reload` and how to recover it
 - [ ] I successfully unbanned a false-positive IP with `fail2ban-client set <jail> unbanip <IP>`
 - [ ] I added a permanent `ignoreip` entry to prevent future false positives for that IP
 - [ ] I can locate and interpret `fail2ban.actions` log lines to trace the full ban lifecycle
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
+
+## Summary
+
+In this module you learned:
+
+- The **five-layer troubleshooting model**: log source → filter → jail logic →
+  action/firewall → outcome — diagnose bottom-up
+- Fixing **startup failures**: config syntax, missing firewalld, locked
+  database, stale PID/socket, missing dependencies
+- Why **jails fail to activate**: disabled, typos, missing log files,
+  backend/filter mismatches
+- Why **bans don't fire**: filter mismatch, findtime/maxretry tuning,
+  `ignoreip`, clock skew
+- **Regex debugging** with `fail2ban-regex --print-all-missed` and `datepattern`
+- **Firewall integration failures**: the firewalld reload/restart gap, zones,
+  SELinux, ipset `maxelem`
+- **Unban issues**: permanent bans, multi-jail bans, failed unban actions
+- Handling **false positives** quickly (unban + `ignoreip`)
+- **SELinux diagnosis** with `ausearch`/`audit2why`/`audit2allow`
+- **Performance**, **log rotation**, **email**, **database**, and **recidive**
+  troubleshooting
+- A **diagnostic cheat sheet** you can keep at hand in production
 
 *You have completed all 13 modules of the Fail2ban on RHEL 10 course.*
 

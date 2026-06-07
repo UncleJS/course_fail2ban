@@ -25,6 +25,9 @@
 12. [SELinux — Creating a Policy Module](#12-selinux--creating-a-policy-module)
 13. [Systemd Service Configuration for Fail2ban](#13-systemd-service-configuration-for-fail2ban)
 14. [Lab 11 — Systemd Backend, journalmatch, and SELinux Audit](#lab-11--systemd-backend-journalmatch-and-selinux-audit)
+15. [Summary](#summary)
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -61,9 +64,6 @@ This means fail2ban needs to read from the **systemd journal** for many core ser
 ### Journal storage
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Journal files are stored here:
 /run/log/journal/    ← volatile (RAM disk — cleared on reboot)
 /var/log/journal/    ← persistent (requires configuration — see section 9)
@@ -104,6 +104,8 @@ Each journal entry is structured with named fields:
 
 These field names are used in `journalmatch` to filter which entries fail2ban processes.
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 3. The systemd Backend in Fail2ban
@@ -120,9 +122,6 @@ Fail2ban supports multiple backends for reading logs:
 ### Setting backend per jail
 
 ```ini
-
-[↑ Back to TOC](#table-of-contents)
-
 # For SSH (journald on RHEL 10):
 [sshd]
 backend = systemd
@@ -133,16 +132,27 @@ backend = auto
 logpath = /var/log/httpd/*error_log
 ```
 
-### Setting a global default
+### The global default on RHEL 10
+
+On RHEL 10, `backend = systemd` **is already the global default** — the
+`fail2ban-systemd` package sets it in `jail.d/00-systemd.conf`, and the course
+`jail.local` keeps it. That is the right default for journald-based services
+(sshd, Postfix, Dovecot).
+
+The catch: with a global systemd backend, **every flat-file jail must
+explicitly override it**, or its `logpath` is silently ignored and the jail
+reads the whole journal instead of the file:
 
 ```ini
-# /etc/fail2ban/jail.local
-
-[DEFAULT]
-# Do NOT set systemd as global default — it breaks flat-file jails.
-# Set per-jail for services that use journald.
+# Any jail that reads a flat log file needs this override:
+[apache-auth]
 backend = auto
+logpath = /var/log/httpd/*error_log
 ```
+
+If most of your jails are flat-file based, you can flip the global default to
+`auto` instead and set `backend = systemd` per-jail — both layouts are valid,
+just be consistent and explicit.
 
 ### What systemd backend does internally
 
@@ -151,6 +161,8 @@ When `backend = systemd` is set:
 2. It subscribes to the journal with the `journalmatch` criteria from the filter
 3. Each matching entry's `MESSAGE` field is passed through the `failregex`
 4. No `logpath` is needed or used
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -161,9 +173,6 @@ When `backend = systemd` is set:
 ### Where journalmatch is defined
 
 ```ini
-
-[↑ Back to TOC](#table-of-contents)
-
 # In the filter file:
 # /etc/fail2ban/filter.d/sshd.conf
 
@@ -202,6 +211,8 @@ journalmatch = _UID=33
 ### journalmatch is optional
 
 If `journalmatch` is not set in the filter, and `backend = systemd`, fail2ban reads **all** journal entries and applies `failregex` to every `MESSAGE` field. This is very inefficient. Always set `journalmatch` for systemd-backend filters.
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -253,9 +264,6 @@ sudo journalctl -u sshd.service -n 5 -o verbose --no-pager
 ### Method 3 — list unique values for a field
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # See all unique _SYSTEMD_UNIT values for systemd services
 sudo journalctl -F _SYSTEMD_UNIT | sort -u | grep -i ssh
 ```
@@ -268,6 +276,8 @@ You can test a journalmatch with `journalctl` to verify it returns the expected 
 # These are equivalent to journalmatch = _SYSTEMD_UNIT=sshd.service + _COMM=sshd
 sudo journalctl _SYSTEMD_UNIT=sshd.service _COMM=sshd -n 10 --no-pager
 ```
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -306,9 +316,6 @@ If this line is present, the shipped filter handles RHEL 10 journald correctly. 
 ### Enabling sshd jail with systemd backend
 
 ```ini
-
-[↑ Back to TOC](#table-of-contents)
-
 # /etc/fail2ban/jail.d/sshd.conf
 
 [sshd]
@@ -319,6 +326,8 @@ maxretry = 5
 bantime  = 1h
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 7. Writing a systemd-Backend Filter
@@ -328,9 +337,6 @@ When a shipped filter does not have `journalmatch` or does not exist for your se
 ### Step 1 — Identify journal fields
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Find a failure entry in the journal
 sudo journalctl -u myservice.service -n 20 --no-pager | grep -i "fail\|error\|deny\|invalid"
 
@@ -388,6 +394,8 @@ findtime  = 10m
 bantime   = 1h
 port      = 8080
 ```
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -451,9 +459,6 @@ sudo systemctl restart systemd-journald
 
 ```bash
 ls /var/log/journal/
-
-[↑ Back to TOC](#table-of-contents)
-
 # Should show a machine-ID directory with .journal files
 ```
 
@@ -469,6 +474,8 @@ MaxRetentionSec=30day
 EOF
 sudo systemctl restart systemd-journald
 ```
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -486,9 +493,6 @@ The fail2ban package ships with an SELinux policy that allows all of these on a 
 
 ```bash
 getenforce
-
-[↑ Back to TOC](#table-of-contents)
-
 # Enforcing   ← default on RHEL 10 (recommended)
 # Permissive  ← logs denials but does not enforce
 # Disabled    ← SELinux completely off (not recommended)
@@ -519,6 +523,8 @@ sudo ausearch -m avc -ts recent | grep fail2ban
 
 If `ausearch` returns no output, SELinux is not blocking fail2ban.
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 11. SELinux — Diagnosing Denials
@@ -528,9 +534,6 @@ When fail2ban fails to apply bans, SELinux denials are a common cause on RHEL 10
 ### Check the audit log
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Show all AVC (access vector cache) denials in the last hour
 sudo ausearch -m avc -ts recent --no-pager
 
@@ -573,6 +576,8 @@ sudo journalctl -k | grep "avc:"
 | fail2ban cannot read a custom log file | `read` denied on custom log type |
 | Custom action script cannot run | `execute` denied on custom script |
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 12. SELinux — Creating a Policy Module
@@ -582,9 +587,6 @@ If you have custom paths or scripts that SELinux denies, create a targeted polic
 ### Step 1 — Temporarily put SELinux in permissive mode (for testing only)
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Switch to permissive — logs denials but does not block
 sudo setenforce 0
 # Test your fail2ban configuration
@@ -654,6 +656,8 @@ sudo semanage fcontext -a -t var_log_t "/var/log/myapp(/.*)?"
 sudo restorecon -Rv /var/log/myapp/
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 13. Systemd Service Configuration for Fail2ban
@@ -672,8 +676,7 @@ Expected (abbreviated):
 [Unit]
 Description=Fail2Ban Service
 Documentation=man:fail2ban(1)
-After=network.target iptables.service firewalld.service ip6tables.service ipset.service
-PartOf=firewalld.service
+After=network.target iptables.service firewalld.service ip6tables.service ipset.service nftables.service
 
 [Service]
 Type=simple
@@ -691,18 +694,18 @@ WantedBy=multi-user.target
 
 ### Key dependency: `After=firewalld.service`
 
-This ensures fail2ban starts **after** firewalld. If firewalld is not running when fail2ban starts, the firewallcmd actions will fail.
+This ensures fail2ban starts **after** firewalld at boot. If firewalld is not
+running when fail2ban starts, the firewallcmd actions will fail.
 
-### `PartOf=firewalld.service`
-
-This means if firewalld is stopped, fail2ban is automatically stopped too. This is intentional — without firewalld, fail2ban cannot apply bans.
+Note what the shipped unit does **not** have: a `PartOf=` or `BindsTo=`
+relationship to firewalld. So if firewalld is *restarted later*, fail2ban
+keeps running with its firewall rules wiped (see Module 08 §10 and Module 13
+Scenario 3). Adding `PartOf=firewalld.service` via a drop-in is a useful
+hardening step — Module 13 shows how.
 
 ### Override unit settings (do not edit the file directly)
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Create a drop-in override
 sudo systemctl edit fail2ban.service
 ```
@@ -713,10 +716,13 @@ This opens an editor. Add override stanzas:
 [Service]
 # Increase restart delay to avoid thrashing
 RestartSec=10s
-
-# Add watchdog support (see Module 12)
-WatchdogSec=30s
 ```
+
+> **About `WatchdogSec`:** do **not** add it for fail2ban. The watchdog
+> requires the daemon to send periodic `sd_notify(WATCHDOG=1)` pings, which
+> fail2ban does not do — systemd would kill and restart it on every interval.
+> Use `Restart=on-failure` plus the external healthcheck timer from Module 12
+> instead.
 
 ### Reload systemd after changes
 
@@ -731,6 +737,8 @@ sudo systemctl restart fail2ban.service
 systemctl status fail2ban.service
 systemd-analyze blame | grep fail2ban
 ```
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -935,7 +943,30 @@ Look for `Currently failed` count to increment.
 - [ ] `fail2ban-regex` matched failures from a `journalctl` export or the live journal
 - [ ] `getenforce` returns `Enforcing` and `ausearch` found no fail2ban AVC denials
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
+
+## Summary
+
+In this module you learned:
+
+- **Why journald matters on RHEL 10**: sshd, Postfix, Dovecot and PAM log only
+  to the journal — no flat files
+- **How journald stores entries** as structured fields (`_SYSTEMD_UNIT`,
+  `_COMM`, `SYSLOG_IDENTIFIER`, `MESSAGE`)
+- The **systemd backend**: it is the EPEL global default; flat-file jails must
+  override with `backend = auto`
+- **`journalmatch`**: pre-filtering journal subscriptions for performance, and
+  how to discover the right fields
+- The **journal cursor**: fail2ban resumes where it left off; bans are restored
+  from SQLite, not re-derived from logs
+- **Journal persistence**: enabling `/var/log/journal` and retention limits
+- **SELinux on RHEL 10**: the `fail2ban_t` domain, diagnosing AVC denials with
+  `ausearch`/`audit2why`, building policy modules with `audit2allow`, and
+  relabeling custom log paths
+- The **fail2ban systemd unit**: ordering vs binding, safe drop-in overrides,
+  and why `WatchdogSec` must not be used with fail2ban
 
 ### Next Steps
 

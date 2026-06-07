@@ -15,7 +15,7 @@
 2. [Service-Level Checks](#2-service-level-checks)
 3. [Socket and PID Checks](#3-socket-and-pid-checks)
 4. [Jail Status Checks](#4-jail-status-checks)
-5. [Firewalld Integration Verification](#5-firewalld-integration-verification)
+5. [Firewall Integration Verification](#5-firewall-integration-verification)
 6. [Log Activity Checks](#6-log-activity-checks)
 7. [Database Integrity Checks](#7-database-integrity-checks)
 8. [End-to-End Smoke Test](#8-end-to-end-smoke-test)
@@ -24,6 +24,9 @@
 11. [Scheduled Monitoring with Systemd Timers](#11-scheduled-monitoring-with-systemd-timers)
 12. [Alerting Integrations](#12-alerting-integrations)
 13. [Lab 12 — Deploy the Healthcheck Script and Systemd Timer](#lab-12--deploy-the-healthcheck-script-and-systemd-timer)
+14. [Summary](#summary)
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -65,9 +68,6 @@ systemctl is-active fail2ban.service
 | `activating` | Service is starting |
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Exit code check (0 = active, non-zero = not active)
 if ! systemctl is-active --quiet fail2ban.service; then
   echo "CRITICAL: fail2ban service is not active"
@@ -114,6 +114,8 @@ else
   echo "CRITICAL: One or both services are down"
 fi
 ```
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -199,9 +201,6 @@ done
 ### Check per-jail statistics
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Get status for a specific jail
 sudo fail2ban-client status sshd
 ```
@@ -224,11 +223,15 @@ echo "sshd jail total failures since start: $TOTAL_FAILED"
 sudo journalctl -u sshd.service --since "1 hour ago" | grep -c "Failed password" || echo "0 SSH failures in journal in last hour"
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
-## 5. Firewalld Integration Verification
+## 5. Firewall Integration Verification
 
-Verify that fail2ban's firewalld ipsets exist and are populated when bans are active.
+Verify that fail2ban's enforcement layer (kernel ipsets with the
+`firewallcmd-ipset` action, rich rules with the EPEL default) exists and is
+populated when bans are active.
 
 ### Check firewalld is running
 
@@ -239,15 +242,14 @@ sudo firewall-cmd --state
 ### List all fail2ban ipsets
 
 ```bash
-sudo firewall-cmd --get-ipsets | tr ' ' '\n' | grep "^f2b-"
+sudo ipset list -n | grep "^f2b-"
 ```
 
-Expected output (one ipset per enabled jail):
+Expected output (one ipset per enabled jail, once the jail has started):
 
 ```
 f2b-sshd
 f2b-labapp
-f2b-recidive
 ```
 
 ### Check ipset exists for a specific jail
@@ -256,30 +258,29 @@ f2b-recidive
 JAIL="sshd"
 IPSET="f2b-${JAIL}"
 
-if sudo firewall-cmd --get-ipsets 2>/dev/null | grep -qw "$IPSET"; then
-  ENTRY_COUNT=$(sudo firewall-cmd --ipset="$IPSET" --get-entries 2>/dev/null | wc -l)
-  echo "OK: ipset '$IPSET' exists with $ENTRY_COUNT entries"
+if sudo ipset list -n 2>/dev/null | grep -qx "$IPSET"; then
+  ENTRY_COUNT=$(sudo ipset list "$IPSET" -terse 2>/dev/null | sed -n 's/^Number of entries: //p')
+  echo "OK: ipset '$IPSET' exists with ${ENTRY_COUNT:-0} entries"
 else
-  echo "WARNING: ipset '$IPSET' does not exist (no bans active or firewalld reset)"
+  echo "WARNING: ipset '$IPSET' does not exist (jail not started or firewalld was reset)"
 fi
 ```
 
-### Check active rich rules (for firewallcmd-allports bans)
+### Check the direct rule that enforces the ipset
 
 ```bash
-RULE_COUNT=$(sudo firewall-cmd --list-rich-rules 2>/dev/null | grep -c "reject\|drop" || echo 0)
-echo "Active firewalld rich rules (allports bans): $RULE_COUNT"
+if sudo firewall-cmd --direct --get-all-rules 2>/dev/null | grep -q "f2b-sshd"; then
+  echo "OK: enforcement rule for f2b-sshd present"
+else
+  echo "WARNING: no enforcement rule — bans in the ipset are NOT being enforced"
+fi
 ```
 
-### Verify firewalld zone contains the ipset source
+### Check active rich rules (EPEL default action / rich-rules bans)
 
 ```bash
-ZONE="public"
-sudo firewall-cmd --zone="$ZONE" --list-sources 2>/dev/null
-
-[↑ Back to TOC](#table-of-contents)
-
-# Should list ipset:f2b-sshd etc. when bans are active
+RULE_COUNT=$(sudo firewall-cmd --list-rich-rules 2>/dev/null | grep -c "reject\|drop")
+echo "Active firewalld rich rules: $RULE_COUNT"
 ```
 
 ### Cross-reference: ban in fail2ban matches ipset entry
@@ -288,12 +289,14 @@ sudo firewall-cmd --zone="$ZONE" --list-sources 2>/dev/null
 # Get banned IPs from fail2ban
 F2B_BANNED=$(sudo fail2ban-client status sshd 2>/dev/null | grep "Banned IP list" | sed 's/.*Banned IP list:\s*//')
 
-# Get entries from firewalld ipset
-IPSET_ENTRIES=$(sudo firewall-cmd --ipset=f2b-sshd --get-entries 2>/dev/null)
+# Get entries from the kernel ipset
+IPSET_ENTRIES=$(sudo ipset list f2b-sshd 2>/dev/null | sed -n '/Members:/,$p' | tail -n +2)
 
 echo "fail2ban reports banned: $F2B_BANNED"
-echo "firewalld ipset contains: $IPSET_ENTRIES"
+echo "kernel ipset contains:   $IPSET_ENTRIES"
 ```
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -304,9 +307,6 @@ Verify that fail2ban's log source (flat file or journal) is active and recent.
 ### Check fail2ban's own log for recent activity
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # If using file logging:
 if [[ -f /var/log/fail2ban.log ]]; then
   LAST_LINE=$(sudo tail -1 /var/log/fail2ban.log)
@@ -356,6 +356,8 @@ else
   echo "CRITICAL: Cannot read systemd journal"
 fi
 ```
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -440,9 +442,6 @@ A smoke test verifies the full pipeline: write a failure to the log → fail2ban
 
 ```bash
 #!/bin/bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # End-to-end smoke test for fail2ban + firewalld pipeline
 
 JAIL="labapp"
@@ -479,12 +478,12 @@ else
   exit 1
 fi
 
-# 5. Check firewalld ipset
+# 5. Check the kernel ipset
 IPSET="f2b-${JAIL}"
-if sudo firewall-cmd --ipset="$IPSET" --get-entries 2>/dev/null | grep -q "$TEST_IP"; then
-  echo "PASS: firewalld ipset contains $TEST_IP"
+if sudo ipset test "$IPSET" "$TEST_IP" 2>/dev/null; then
+  echo "PASS: ipset $IPSET contains $TEST_IP"
 else
-  echo "FAIL: firewalld ipset does NOT contain $TEST_IP"
+  echo "FAIL: ipset $IPSET does NOT contain $TEST_IP"
   sudo fail2ban-client set "$JAIL" unbanip "$TEST_IP" 2>/dev/null
   exit 1
 fi
@@ -504,6 +503,8 @@ fi
 echo "=== Smoke Test PASSED ==="
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 9. The Full Bash Healthcheck Script
@@ -512,14 +513,14 @@ This production-ready healthcheck script combines all checks from sections 2–8
 
 ```bash
 #!/bin/bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # /usr/local/bin/fail2ban-healthcheck.sh
 # Fail2ban healthcheck script for RHEL 10
 # Exit codes: 0=OK, 1=WARNING, 2=CRITICAL
+#
+# NOTE: deliberately no `set -e` / `pipefail` — a healthcheck must keep
+# running and REPORT failures, not die on the first failed command.
 
-set -euo pipefail
+set -u
 
 # ============================================================
 # Configuration
@@ -612,16 +613,22 @@ for jail in "${OPTIONAL_JAILS[@]}"; do
 done
 
 # ============================================================
-# CHECK 6: firewalld ipsets exist for active jails
+# CHECK 6: kernel ipsets + enforcement rules exist for active jails
+# (assumes banaction = firewallcmd-ipset; adjust for rich-rules setups)
 # ============================================================
-IPSETS=$(firewall-cmd --get-ipsets 2>/dev/null)
+DIRECT_RULES=$(firewall-cmd --direct --get-all-rules 2>/dev/null)
 for jail in "${REQUIRED_JAILS[@]}"; do
   IPSET="f2b-${jail}"
-  if echo "$IPSETS" | grep -qw "$IPSET"; then
-    ENTRY_COUNT=$(firewall-cmd --ipset="$IPSET" --get-entries 2>/dev/null | wc -l)
-    ok "ipset '$IPSET' exists ($ENTRY_COUNT entries)"
+  if ipset list -n 2>/dev/null | grep -qx "$IPSET"; then
+    ENTRY_COUNT=$(ipset list "$IPSET" -terse 2>/dev/null | sed -n 's/^Number of entries: //p')
+    ok "ipset '$IPSET' exists (${ENTRY_COUNT:-0} entries)"
+    if echo "$DIRECT_RULES" | grep -qw "$IPSET"; then
+      ok "enforcement rule for '$IPSET' present"
+    else
+      crit "ipset '$IPSET' has NO enforcement rule — bans not enforced (firewalld reloaded? restart fail2ban)"
+    fi
   else
-    warn "ipset '$IPSET' does not exist (no active bans or firewalld was recently restarted)"
+    warn "ipset '$IPSET' does not exist (jail not started yet?)"
   fi
 done
 
@@ -680,8 +687,9 @@ fi
 
 # ============================================================
 # CHECK 11: Recent SELinux denials for fail2ban
+# (grep -c prints 0 itself when nothing matches — no fallback needed)
 # ============================================================
-AVC_COUNT=$(ausearch -m avc -ts recent --no-pager 2>/dev/null | grep -c "fail2ban" || echo 0)
+AVC_COUNT=$(ausearch -m avc -ts recent --no-pager 2>/dev/null | grep -c "fail2ban")
 if (( AVC_COUNT > 0 )); then
   warn "$AVC_COUNT recent SELinux AVC denial(s) related to fail2ban — run: sudo ausearch -m avc -ts recent | grep fail2ban"
 else
@@ -743,20 +751,27 @@ sudo chmod +x /usr/local/bin/fail2ban-healthcheck.sh
 sudo /usr/local/bin/fail2ban-healthcheck.sh
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 10. Systemd Watchdog Integration
 
-Systemd's watchdog feature allows fail2ban to notify systemd that it is alive. If fail2ban stops sending watchdog pings, systemd restarts it automatically.
+Systemd's watchdog feature lets a daemon prove it is alive by sending periodic
+pings; if pings stop, systemd restarts it.
 
-### How watchdog works
+### How watchdog works (in general)
 
-1. Systemd starts fail2ban with `WatchdogSec=N` in the unit file
-2. Fail2ban receives `WATCHDOG_USEC` environment variable
-3. Fail2ban must call `sd_notify("WATCHDOG=1")` at least every `N` seconds
-4. If the ping is missed, systemd considers fail2ban unhealthy and restarts it
+1. Systemd starts a service with `WatchdogSec=N` in the unit file
+2. The daemon receives the `WATCHDOG_USEC` environment variable
+3. The daemon must call `sd_notify("WATCHDOG=1")` at least every `N` seconds
+4. If the ping is missed, systemd considers the service unhealthy and restarts it
 
-> **Note:** Fail2ban's built-in watchdog support is limited. The more practical approach on RHEL 10 is to use `Restart=on-failure` (already configured in the default unit) combined with the external healthcheck timer approach in section 11.
+> **Do not enable `WatchdogSec` for fail2ban.** Fail2ban does not send
+> `sd_notify` watchdog pings, so systemd would kill and restart it on every
+> interval — a self-inflicted outage. The practical approach on RHEL 10 is
+> `Restart=on-failure` (already configured in the default unit) combined with
+> the external healthcheck timer approach in section 11.
 
 ### Configure systemd to auto-restart fail2ban on failure
 
@@ -794,9 +809,6 @@ RestartSec=10s
 ### Simulate a crash and verify auto-restart
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Kill fail2ban forcefully
 sudo kill -9 $(cat /run/fail2ban/fail2ban.pid 2>/dev/null)
 sleep 15
@@ -811,6 +823,8 @@ sudo fail2ban-client ping
 ```bash
 systemctl show fail2ban.service | grep -E "NRestarts"
 ```
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -844,9 +858,6 @@ Description=Run fail2ban healthcheck every 15 minutes
 After=fail2ban.service
 
 [Timer]
-
-[↑ Back to TOC](#table-of-contents)
-
 # Run 2 minutes after boot (allow services to start)
 OnBootSec=2min
 # Then every 15 minutes
@@ -892,6 +903,8 @@ sudo systemctl start fail2ban-healthcheck.service
 sudo journalctl -u fail2ban-healthcheck.service -n 30 --no-pager
 ```
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
 
 ## 12. Alerting Integrations
@@ -903,9 +916,6 @@ When the healthcheck detects a problem, you want to be notified. Here are three 
 Modify the healthcheck script to send email on failure:
 
 ```bash
-
-[↑ Back to TOC](#table-of-contents)
-
 # Add at the end of fail2ban-healthcheck.sh:
 
 ALERT_EMAIL="admin@example.com"
@@ -1010,14 +1020,16 @@ OUTFILE="$OUTDIR/fail2ban.prom"
     echo "fail2ban_up 0"
   fi
 
-  echo "# HELP fail2ban_banned_total Current number of banned IPs per jail"
-  echo "# TYPE fail2ban_banned_total gauge"
+  echo "# HELP fail2ban_banned_current Current number of banned IPs per jail"
+  echo "# TYPE fail2ban_banned_current gauge"
   fail2ban-client status 2>/dev/null | grep "Jail list" | sed 's/.*Jail list:\s*//' | tr ', ' '\n' | grep -v '^$' | while read jail; do
     count=$(fail2ban-client status "$jail" 2>/dev/null | grep "Currently banned" | awk '{print $NF}')
-    echo "fail2ban_banned_total{jail=\"$jail\"} ${count:-0}"
+    echo "fail2ban_banned_current{jail=\"$jail\"} ${count:-0}"
   done
 } > "$OUTFILE.tmp" && mv "$OUTFILE.tmp" "$OUTFILE"
 ```
+
+[↑ Back to TOC](#table-of-contents)
 
 ---
 
@@ -1043,7 +1055,8 @@ Deploy the full fail2ban healthcheck script, run it manually, and schedule it wi
 ```bash
 sudo tee /usr/local/bin/fail2ban-healthcheck.sh > /dev/null << 'SCRIPT'
 #!/bin/bash
-set -euo pipefail
+# No `set -e`/pipefail: the script must keep going and REPORT failures.
+set -u
 
 REQUIRED_JAILS=("sshd" "labapp")
 DB="/var/lib/fail2ban/fail2ban.sqlite3"
@@ -1235,7 +1248,27 @@ sudo journalctl -u fail2ban-healthcheck.service -n 30 --no-pager
 - [ ] I know how to customise `REQUIRED_JAILS` at the top of the script for my environment
 - [ ] The script is executable (`ls -l /usr/local/bin/fail2ban-healthcheck.sh` shows `-rwxr-xr-x`)
 
+[↑ Back to TOC](#table-of-contents)
+
 ---
+
+## Summary
+
+In this module you learned:
+
+- **Why healthchecks matter**: fail2ban's failure modes are mostly silent
+- **Service-level checks**: `systemctl is-active`, `fail2ban-client ping`, firewalld state
+- **Socket/PID checks** and per-**jail status checks** against a required-jails list
+- **Firewall integration checks**: kernel ipset existence *and* the enforcement
+  rule that matches it (catching the post-reload gap)
+- **Log activity and database integrity checks** (SQLite `PRAGMA integrity_check`)
+- An **end-to-end smoke test** that injects failures and traces the ban through
+  every layer
+- A **production healthcheck script** with OK/WARNING/CRITICAL exit codes —
+  written to report failures rather than die on them (no `set -e`)
+- **Systemd integration**: `Restart=on-failure` (not `WatchdogSec`) and a
+  15-minute healthcheck timer
+- **Alerting patterns**: email, webhooks, `OnFailure=`, and Prometheus textfile metrics
 
 ### Next Steps
 

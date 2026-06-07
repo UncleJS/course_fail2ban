@@ -72,8 +72,8 @@ default. Here are the most commonly used ones on RHEL 10:
 | `postfix` | Postfix MTA | `postfix.conf` | journald / `/var/log/maillog` |
 | `postfix-sasl` | Postfix SASL | `postfix-sasl.conf` | journald / `/var/log/maillog` |
 | `dovecot` | Dovecot IMAP/POP3 | `dovecot.conf` | journald / `/var/log/maillog` |
-| `mysqld-auth` | MySQL / MariaDB | `mysqld-auth.conf` | `/var/log/mysqld.log` |
-| `recidive` | Fail2ban itself | `recidive.conf` | `/var/log/fail2ban.log` |
+| `mysqld-auth` | MySQL / MariaDB | `mysqld-auth.conf` | `/var/log/mariadb/mariadb.log` (RHEL) |
+| `recidive` | Fail2ban itself | `recidive.conf` | journald / `/var/log/fail2ban.log` (see Module 10) |
 | `vsftpd` | vsftpd | `vsftpd.conf` | `/var/log/vsftpd.log` |
 | `proftpd` | ProFTPD | `proftpd.conf` | `/var/log/proftpd/proftpd.log` |
 
@@ -196,19 +196,23 @@ bantime  = 1h
 maxretry = 6
 ```
 
-### 404 flood protection
+### Bot/scanner path probing protection
 
 ```ini
-[apache-404]
+[apache-botsearch]
 enabled  = true
 port     = http,https
 filter   = apache-botsearch
 logpath  = /var/log/httpd/access_log
 backend  = auto
 bantime  = 1h
-maxretry = 300
-findtime = 300
+maxretry = 2
+findtime = 5m
 ```
+
+The `apache-botsearch` filter matches requests for paths that legitimate
+users never hit (e.g. `/phpmyadmin`, `/wp-admin` on a non-WordPress site),
+so a very low `maxretry` is appropriate.
 
 > **Note:** For Apache jails, the `backend` must be set to `auto` (file-based)
 > since Apache writes to flat files, not journald. Ensure httpd is installed
@@ -383,16 +387,21 @@ sudo fail2ban-client get sshd actions
 
 ### Watch the log in real time
 
+On RHEL 10 fail2ban logs to the journal by default:
+
 ```bash
-sudo tail -f /var/log/fail2ban.log
+sudo journalctl -u fail2ban -f
 ```
 
 ```
-2026-01-10 10:15:42,001 fail2ban.filter   [12346]: INFO    [sshd] Found 185.220.101.5 - 2026-01-10 10:15:41
-2026-01-10 10:15:43,002 fail2ban.filter   [12346]: INFO    [sshd] Found 185.220.101.5 - 2026-01-10 10:15:42
-2026-01-10 10:15:44,003 fail2ban.filter   [12346]: INFO    [sshd] Found 185.220.101.5 - 2026-01-10 10:15:43
-2026-01-10 10:15:45,004 fail2ban.actions  [12346]: NOTICE  [sshd] Ban 185.220.101.5
+Jan 10 10:15:42 server fail2ban-server[12346]: fail2ban.filter   [12346]: INFO    [sshd] Found 185.220.101.5 - 2026-01-10 10:15:41
+Jan 10 10:15:43 server fail2ban-server[12346]: fail2ban.filter   [12346]: INFO    [sshd] Found 185.220.101.5 - 2026-01-10 10:15:42
+Jan 10 10:15:44 server fail2ban-server[12346]: fail2ban.filter   [12346]: INFO    [sshd] Found 185.220.101.5 - 2026-01-10 10:15:43
+Jan 10 10:15:45 server fail2ban-server[12346]: fail2ban.actions  [12346]: NOTICE  [sshd] Ban 185.220.101.5
 ```
+
+(If you have configured `logtarget = /var/log/fail2ban.log`, use
+`sudo tail -f /var/log/fail2ban.log` instead.)
 
 [↑ Back to TOC](#table-of-contents)
 
@@ -435,8 +444,10 @@ done
 
 ```bash
 sudo fail2ban-client status sshd | grep "Banned IP"
-# or
-sudo fail2ban-client get sshd banip
+# or list the banned IPs directly
+sudo fail2ban-client get sshd banned
+# or query one IP across ALL jails (returns the jails it is banned in)
+sudo fail2ban-client banned 185.220.101.5
 ```
 
 ### Flush all bans in a jail
@@ -572,8 +583,8 @@ sudo fail2ban-client set sshd banip $TEST_IP
 # Verify it's in the banned list
 sudo fail2ban-client status sshd | grep "Banned IP"
 
-# Verify it's in firewalld
-sudo firewall-cmd --info-ipset=fail2ban-sshd 2>/dev/null | grep $TEST_IP
+# Verify it's enforced at the firewall (firewallcmd-ipset action)
+sudo ipset list f2b-sshd | grep $TEST_IP
 
 # Unban it
 sudo fail2ban-client set sshd unbanip $TEST_IP
@@ -585,7 +596,7 @@ sudo fail2ban-client status sshd | grep "Banned IP"
 ### Step 6 — Read the log
 
 ```bash
-sudo grep "203.0.113.99" /var/log/fail2ban.log
+sudo journalctl -u fail2ban --no-pager | grep "203.0.113.99"
 ```
 
 You should see both a `Ban` and an `Unban` entry.
@@ -596,7 +607,7 @@ You should see both a `Ban` and an `Unban` entry.
 
 - [ ] `fail2ban-client status` lists more than one jail
 - [ ] I can run `fail2ban-client status <jailname>` for each enabled jail and read the output
-- [ ] I manually banned an IP with `fail2ban-client set sshd banip <IP>` and saw it in `firewall-cmd --info-ipset`
+- [ ] I manually banned an IP with `fail2ban-client set sshd banip <IP>` and saw it in `ipset list f2b-sshd`
 - [ ] I manually unbanned the IP and confirmed it was removed from the ipset
 - [ ] I understand when to use `backend = systemd` (journald) vs `backend = auto` (flat files)
 - [ ] I found a `Ban` + `Unban` pair for the test IP in the fail2ban log

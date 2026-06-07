@@ -98,9 +98,9 @@ Fail2ban operates in a continuous loop:
 └─────────────────────────────────────────────────────────┘
          │                │                  │
          ▼                ▼                  ▼
-    /var/log/        Regex in           firewall-cmd
-    secure or        filter.d/          --add-rich-rule
-    journald         sshd.conf
+    /var/log/        Regex in           firewall-cmd /
+    secure or        filter.d/          ipset add
+    journald         sshd.conf          f2b-sshd <ip>
 ```
 
 Step-by-step:
@@ -116,8 +116,9 @@ Step-by-step:
    within a sliding time window (`findtime`).
 
 4. **Ban** — when the count reaches the threshold (`maxretry`), fail2ban
-   triggers an *action*. On RHEL 10 this means calling `firewall-cmd` to add a
-   rule that drops all traffic from that IP.
+   triggers an *action*. On RHEL 10 this means adding a firewall rule (via
+   `firewall-cmd` rich rules, or an `ipset` entry matched by a firewalld rule)
+   that blocks traffic from that IP.
 
 5. **Unban** — after `bantime` seconds have elapsed, fail2ban calls the unban
    action to remove the firewall rule and the IP can connect again.

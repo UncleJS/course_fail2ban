@@ -15,9 +15,9 @@
 2. [Firewalld Core Concepts](#2-firewalld-core-concepts)
 3. [How Fail2ban Talks to Firewalld](#3-how-fail2ban-talks-to-firewalld)
 4. [firewallcmd-ipset Action In Depth](#4-firewallcmd-ipset-action-in-depth)
-5. [firewallcmd-new Action In Depth](#5-firewallcmd-new-action-in-depth)
+5. [firewallcmd-rich-rules Action In Depth](#5-firewallcmd-rich-rules-action-in-depth)
 6. [firewallcmd-allports Action In Depth](#6-firewallcmd-allports-action-in-depth)
-7. [Choosing the Right Zone](#7-choosing-the-right-zone)
+7. [Zones and How Fail2ban Rules Relate to Them](#7-zones-and-how-fail2ban-rules-relate-to-them)
 8. [Verifying Bans in Firewalld](#8-verifying-bans-in-firewalld)
 9. [IPv6 Support](#9-ipv6-support)
 10. [Permanent vs Runtime Rules](#10-permanent-vs-runtime-rules)
@@ -107,18 +107,26 @@ sudo firewall-cmd --add-rich-rule='rule family=ipv4 source address="185.220.101.
 
 An **ipset** is a named collection of IP addresses stored in a kernel hash
 table. Blocking an entire ipset with one rule is far more efficient than
-one rich rule per IP.
+one rule per IP.
+
+There are two ways to work with ipsets on RHEL 10:
 
 ```bash
-# Create an ipset
+# 1. firewalld-managed ipsets (what firewall-cmd creates and lists):
 sudo firewall-cmd --permanent --new-ipset=myblock --type=hash:ip
-
-# Add an IP to the ipset
 sudo firewall-cmd --ipset=myblock --add-entry=185.220.101.5
-
-# Block the entire ipset with one rich rule
 sudo firewall-cmd --add-rich-rule='rule family=ipv4 source ipset=myblock drop'
+
+# 2. Raw kernel ipsets (created with the ipset binary):
+sudo ipset create myblock hash:ip
+sudo ipset add myblock 185.220.101.5
+sudo ipset list myblock
 ```
+
+> **Important for fail2ban:** the `firewallcmd-ipset` action uses the **second**
+> method — raw kernel ipsets named `f2b-<jail>` plus one `firewall-cmd --direct`
+> rule that matches the set. These sets do **not** appear in
+> `firewall-cmd --get-ipsets`; you inspect them with `ipset list`.
 
 **Performance benefit:** 10,000 IP lookups in an ipset takes microseconds vs
 milliseconds for 10,000 individual rules. This matters on busy servers.
@@ -137,39 +145,57 @@ ban/unban action calls `firewall-cmd` with appropriate arguments.
 1. **Jail starts** → `actionstart` runs:
 
 ```bash
-firewall-cmd --permanent --new-ipset=fail2ban-sshd --type=hash:ip \
-  --option=maxelem=65536 --option=hashsize=4096 --option=timeout=86400
-firewall-cmd --permanent --zone=public \
-  --add-rich-rule='rule family=ipv4 source ipset=fail2ban-sshd drop'
-firewall-cmd --reload
+# Create the kernel ipset (raw ipset binary — not firewalld-managed)
+ipset -exist create f2b-sshd hash:ip maxelem 65536
+
+# Add ONE direct rule that rejects anything in the set
+firewall-cmd --direct --add-rule ipv4 filter INPUT_direct 0 \
+  -p tcp -m multiport --dports 22 \
+  -m set --match-set f2b-sshd src -j REJECT --reject-with icmp-port-unreachable
 ```
 
 2. **IP banned** → `actionban` runs:
 
 ```bash
-firewall-cmd --ipset=fail2ban-sshd --add-entry=185.220.101.5
+ipset -exist add f2b-sshd 185.220.101.5
 ```
 
 3. **Ban expires** → `actionunban` runs:
 
 ```bash
-firewall-cmd --ipset=fail2ban-sshd --remove-entry=185.220.101.5
+ipset -exist del f2b-sshd 185.220.101.5
 ```
 
 4. **Jail stops** → `actionstop` runs:
 
 ```bash
-firewall-cmd --permanent --zone=public \
-  --remove-rich-rule='rule family=ipv4 source ipset=fail2ban-sshd drop'
-firewall-cmd --permanent --delete-ipset=fail2ban-sshd
-firewall-cmd --reload
+firewall-cmd --direct --remove-rule ipv4 filter INPUT_direct 0 \
+  -p tcp -m multiport --dports 22 \
+  -m set --match-set f2b-sshd src -j REJECT --reject-with icmp-port-unreachable
+ipset flush f2b-sshd
+ipset destroy f2b-sshd
+```
+
+### And for the EPEL default (firewallcmd-rich-rules)
+
+With the default action there is no setup at all — each ban simply adds one
+rich rule, and each unban removes it:
+
+```bash
+# actionban:
+firewall-cmd --add-rich-rule="rule family='ipv4' source address='185.220.101.5' port port='22' protocol='tcp' reject type='icmp-port-unreachable'"
+
+# actionunban:
+firewall-cmd --remove-rich-rule="rule family='ipv4' source address='185.220.101.5' port port='22' protocol='tcp' reject type='icmp-port-unreachable'"
 ```
 
 ### Why this matters for troubleshooting
 
 If firewalld's D-Bus socket is unavailable or SELinux is blocking fail2ban from
-executing `firewall-cmd`, bans will silently fail. Always check both fail2ban
-logs AND firewalld status when bans are not working.
+executing `firewall-cmd`/`ipset`, bans will silently fail. Always check both
+fail2ban logs AND firewalld status when bans are not working — and remember
+which action a jail uses, because that decides *where* you look for the ban
+(`ipset list` vs `firewall-cmd --list-rich-rules`).
 
 [↑ Back to TOC](#table-of-contents)
 
@@ -177,7 +203,7 @@ logs AND firewalld status when bans are not working.
 
 ## 4. firewallcmd-ipset Action In Depth
 
-This is the recommended action for production RHEL 10 systems.
+This is the recommended action for busy production RHEL 10 systems.
 
 ```bash
 cat /etc/fail2ban/action.d/firewallcmd-ipset.conf
@@ -185,11 +211,16 @@ cat /etc/fail2ban/action.d/firewallcmd-ipset.conf
 
 ### Key characteristics
 
-- Creates one ipset per jail (e.g., `fail2ban-sshd`, `fail2ban-httpd-auth`)
-- Each ipset has a **timeout** parameter equal to `bantime` (IPs auto-expire)
-- The `--permanent` flag makes the ipset persist across firewalld reloads
-- Only one rich rule is added per jail (the ipset membership rule)
+- Creates one kernel ipset per jail (e.g., `f2b-sshd`, `f2b-httpd-auth`)
+  using the `ipset` binary
+- Adds exactly **one** `firewall-cmd --direct` rule per jail (the set-match rule)
+- Unban timing is managed by fail2ban itself (the set is created without a
+  timeout by default; fail2ban removes entries when `bantime` expires)
 - Ban/unban operations are **O(1)** regardless of how many IPs are in the set
+
+> **Heads-up:** firewalld's `--direct` interface is deprecated upstream. It
+> still works on RHEL 10, but this is why EPEL defaults to the rich-rules
+> action. Use `firewallcmd-ipset` when ban volume justifies it.
 
 ### Performance advantage
 
@@ -204,51 +235,57 @@ With ipset (hash table):
 ### Verify ipset configuration
 
 ```bash
-# List all fail2ban ipsets
-sudo firewall-cmd --get-ipsets | tr ' ' '\n' | grep fail2ban
+# List all fail2ban ipsets (note: ipset binary, NOT firewall-cmd --get-ipsets)
+sudo ipset list -n | grep f2b
 ```
 
 ```
-fail2ban-sshd
-fail2ban-httpd-auth
-```
-
-```bash
-# Get detailed info about an ipset
-sudo firewall-cmd --info-ipset=fail2ban-sshd
-```
-
-```
-fail2ban-sshd
-  type: hash:ip
-  options: maxelem=65536 hashsize=4096 timeout=86400
-  entries:
-  185.220.101.5
-  45.33.32.156
+f2b-sshd
+f2b-httpd-auth
 ```
 
 ```bash
-# Get just the entries
-sudo firewall-cmd --ipset=fail2ban-sshd --get-entries
+# Get detailed info about an ipset, including its entries
+sudo ipset list f2b-sshd
+```
+
+```
+Name: f2b-sshd
+Type: hash:ip
+Revision: 4
+Header: family inet hashsize 1024 maxelem 65536
+Size in memory: 376
+References: 1
+Number of entries: 2
+Members:
+185.220.101.5
+45.33.32.156
+```
+
+```bash
+# Check whether one specific IP is banned
+sudo ipset test f2b-sshd 185.220.101.5
 ```
 
 [↑ Back to TOC](#table-of-contents)
 
 ---
 
-## 5. firewallcmd-new Action In Depth
+## 5. firewallcmd-rich-rules Action In Depth
 
-This action adds individual rich rules per IP. Useful for testing and small
+This action adds individual rich rules per IP. It is the **EPEL default** on
+RHEL 10 (set by `jail.d/00-firewalld.conf`) and is ideal for small and medium
 environments.
 
 ```bash
-cat /etc/fail2ban/action.d/firewallcmd-new.conf
+cat /etc/fail2ban/action.d/firewallcmd-rich-rules.conf
+cat /etc/fail2ban/jail.d/00-firewalld.conf
 ```
 
 ### The ban rule it creates
 
 ```
-rule family="ipv4" source address="185.220.101.5" port port="22" protocol="tcp" reject
+rule family="ipv4" source address="185.220.101.5" port port="22" protocol="tcp" reject type="icmp-port-unreachable"
 ```
 
 ### Listing all rich rules
@@ -284,13 +321,22 @@ This action blocks ALL ports from the banned IP, not just the service port:
 cat /etc/fail2ban/action.d/firewallcmd-allports.conf
 ```
 
-### The ban rule it creates
+### What it does under the hood
 
-```
-rule family="ipv4" source ipset="fail2ban-sshd" drop
+At jail start it creates a dedicated direct chain (`f2b-<jail>`) hooked into
+the filter table; each ban adds one per-IP rule to that chain:
+
+```bash
+# actionstart (once):
+firewall-cmd --direct --add-chain ipv4 filter f2b-sshd
+firewall-cmd --direct --add-rule ipv4 filter f2b-sshd 1000 -j RETURN
+firewall-cmd --direct --add-rule ipv4 filter INPUT_direct 0 -j f2b-sshd
+
+# actionban (per IP):
+firewall-cmd --direct --add-rule ipv4 filter f2b-sshd 0 -s 185.220.101.5 -j REJECT --reject-with icmp-port-unreachable
 ```
 
-Note: no `port` specification — this drops ALL packets from the banned IP.
+Note: no `port` match anywhere — this rejects ALL packets from the banned IP.
 
 ### When to use this
 
@@ -314,10 +360,15 @@ maxretry   = 5
 
 ---
 
-## 7. Choosing the Right Zone
+## 7. Zones and How Fail2ban Rules Relate to Them
 
-By default, fail2ban uses the firewalld **default zone** (usually `public`).
-You can override this per jail or globally.
+Firewalld zones control which rules apply to which interfaces. How fail2ban's
+bans interact with zones depends on the action:
+
+| Action | Zone behaviour |
+|--------|---------------|
+| `firewallcmd-rich-rules` | Rich rules are added to the **default zone** |
+| `firewallcmd-ipset` / `firewallcmd-allports` | `--direct` rules sit in the filter table **before** zone processing — they apply to **all interfaces**, regardless of zone |
 
 ### Check which zone your network interface is in
 
@@ -330,22 +381,18 @@ public
   interfaces: eth0
 ```
 
-### Override zone in action file
-
-```bash
-sudo tee /etc/fail2ban/action.d/firewallcmd-ipset.local << 'EOF'
-[INCLUDES]
-before = firewallcmd-ipset.conf
-
-[Init]
-zone = public
-EOF
-```
-
 ### Multiple interface scenarios
 
 If your server has multiple interfaces (e.g., `eth0` for public, `eth1` for
-private), make sure fail2ban only applies bans to the public-facing zone:
+private/management):
+
+- With the **direct-rule actions** (`firewallcmd-ipset`, `firewallcmd-allports`),
+  a banned IP is blocked on every interface. If internal hosts could ever match
+  a filter (e.g., a misbehaving monitoring system), make sure their ranges are
+  in `ignoreip`.
+- With **rich rules**, bans land in the default zone only — if your service is
+  reachable through an interface in a *different* zone, the ban will not cover
+  it. Check with:
 
 ```bash
 # Check zone for each interface
@@ -353,20 +400,21 @@ sudo firewall-cmd --get-zone-of-interface=eth0
 sudo firewall-cmd --get-zone-of-interface=eth1
 ```
 
-### Using the drop zone for maximum security
+### REJECT vs DROP
 
-The firewalld `drop` zone silently drops all incoming packets (unlike `public`
-which uses `reject`). This prevents port scanning:
+By default the firewallcmd actions REJECT banned traffic (the attacker gets an
+ICMP error). For strict environments you can switch to silently dropping
+packets via the `blocktype` parameter:
 
 ```ini
-# In jail.local for strict environments
+# In jail.local — silently drop instead of reject
 [sshd]
 enabled   = true
-action    = firewallcmd-ipset[name=%(name)s, port="%(port)s", protocol="%(protocol)s", zone=drop]
+banaction = firewallcmd-ipset[blocktype=DROP]
 ```
 
-> **Warning:** Add your management IP to `ignoreip` before enabling the `drop`
-> zone — dropped packets produce no error message, making debugging much harder.
+> **Warning:** Add your management IP to `ignoreip` before switching to DROP —
+> dropped packets produce no error message, making debugging much harder.
 
 [↑ Back to TOC](#table-of-contents)
 
@@ -376,17 +424,17 @@ action    = firewallcmd-ipset[name=%(name)s, port="%(port)s", protocol="%(protoc
 
 After a ban fires, verify it is actually enforced at the firewall level.
 
-### Method 1 — Check ipset entries
+### Method 1 — Check ipset entries (firewallcmd-ipset action)
 
 ```bash
-# Quick check: any IPs banned?
-sudo firewall-cmd --ipset=fail2ban-sshd --get-entries
+# Quick check: any IPs banned? (entries appear under "Members:")
+sudo ipset list f2b-sshd
 
-# Verbose ipset info with entry count
-sudo firewall-cmd --info-ipset=fail2ban-sshd
+# Check one specific IP
+sudo ipset test f2b-sshd 185.220.101.5
 ```
 
-### Method 2 — Check rich rules
+### Method 2 — Check rich rules (firewallcmd-rich-rules action)
 
 ```bash
 # All rich rules in the default zone
@@ -396,7 +444,17 @@ sudo firewall-cmd --list-rich-rules
 sudo firewall-cmd --zone=public --list-rich-rules
 ```
 
-### Method 3 — Full firewall state
+### Method 3 — Check direct rules (ipset/allports actions)
+
+```bash
+sudo firewall-cmd --direct --get-all-rules
+```
+
+```
+ipv4 filter INPUT_direct 0 -p tcp -m multiport --dports 22 -m set --match-set f2b-sshd src -j REJECT --reject-with icmp-port-unreachable
+```
+
+### Method 4 — Full zone state (rich-rules bans show here)
 
 ```bash
 sudo firewall-cmd --list-all
@@ -417,35 +475,25 @@ public (active)
   source-ports:
   icmp-blocks:
   rich rules:
-        rule family="ipv4" source ipset="fail2ban-sshd" drop
-        rule family="ipv4" source ipset="fail2ban-httpd-auth" drop
+        rule family="ipv4" source address="185.220.101.5" port port="22" protocol="tcp" reject type="icmp-port-unreachable"
 ```
-
-### Method 4 — Query a specific IP
-
-```bash
-IP="185.220.101.5"
-sudo firewall-cmd --ipset=fail2ban-sshd --query-entry=$IP
-```
-
-Output: `yes` if the IP is banned, `no` if not.
 
 ### Method 5 — View nftables rules directly
 
 ```bash
-# See the actual kernel-level rules (advanced)
-sudo nft list ruleset | grep -A 5 "fail2ban"
+# See the actual kernel-level rules (advanced) — works for every action
+sudo nft list ruleset | grep -B2 -A2 "f2b"
 ```
 
-### Cross-reference fail2ban with firewalld
+### Cross-reference fail2ban with the firewall
 
 ```bash
 echo "=== Fail2ban banned IPs ==="
 sudo fail2ban-client status sshd | grep "Banned IP"
 
 echo ""
-echo "=== Firewalld ipset entries ==="
-sudo firewall-cmd --ipset=fail2ban-sshd --get-entries
+echo "=== Kernel ipset entries ==="
+sudo ipset list f2b-sshd | sed -n '/Members:/,$p'
 ```
 
 These two lists should match. If they do not, see Module 13 Troubleshooting.
@@ -457,28 +505,28 @@ These two lists should match. If they do not, see Module 13 Troubleshooting.
 ## 9. IPv6 Support
 
 Fail2ban supports both IPv4 and IPv6. The `firewallcmd-ipset` action creates
-separate ipsets for each:
+separate ipsets for each address family:
 
-- `fail2ban-sshd` for IPv4 addresses
-- `fail2ban-sshd6` for IPv6 addresses (if configured)
+- `f2b-sshd` for IPv4 addresses
+- `f2b-sshd6` for IPv6 addresses (if IPv6 traffic triggers the jail)
 
 ### Check IPv6 ipsets
 
 ```bash
-sudo firewall-cmd --get-ipsets | tr ' ' '\n' | grep fail2ban
+sudo ipset list -n | grep f2b
 ```
 
 You may see:
 
 ```
-fail2ban-sshd
-fail2ban-sshd6
+f2b-sshd
+f2b-sshd6
 ```
 
 ### Verify IPv6 bans
 
 ```bash
-sudo firewall-cmd --ipset=fail2ban-sshd6 --get-entries
+sudo ipset list f2b-sshd6
 ```
 
 ### IPv6 in ignoreip
@@ -504,35 +552,48 @@ Firewalld has two rule layers:
 
 ### How fail2ban uses these layers
 
-The `firewallcmd-ipset` action uses:
+**Fail2ban never touches the permanent layer.** Everything it creates is
+runtime-only:
 
-- `--permanent` for ipset **creation** and the rich **rule referencing it**
-- No `--permanent` for ipset **entries** (individual banned IPs)
+- Rich rules (rich-rules action) — runtime only
+- `--direct` rules (ipset / allports actions) — runtime only
+- Kernel ipsets — live outside firewalld entirely (the `ipset` binary talks
+  straight to the kernel)
 
-This means:
-- The ipset infrastructure (creation + rich rule) **survives** firewalld restarts
-- Individual IP entries in the ipset are **runtime only** — fail2ban restores
-  them from the SQLite database after any restart
+This is deliberate: ban state lives in fail2ban's SQLite database, not in
+firewalld's config. After a reboot, fail2ban re-creates everything and
+re-applies unexpired bans from the database.
 
-### The brief gap after firewalld restarts
+### The gap after a firewalld reload or restart
 
-When firewalld is restarted:
-1. Permanent config loads (ipset definition + rich rule are present)
-2. Runtime ipset entries are gone (no IPs in the set yet)
-3. For a few seconds, previously banned IPs can connect again
-4. Fail2ban detects the issue and re-applies all active bans from the database
+When firewalld is reloaded or restarted, it rebuilds the firewall from its
+*permanent* configuration — and everything fail2ban added at runtime is
+**wiped**:
+
+1. `firewall-cmd --reload` or `systemctl restart firewalld` runs
+2. All fail2ban rich rules and `--direct` rules are gone
+3. Kernel ipsets survive (firewalld doesn't manage them) — but the rule that
+   *matched* them is gone, so the bans are **no longer enforced**
+4. Fail2ban does **not** detect this automatically — bans remain "active" in
+   `fail2ban-client status` but nothing blocks the traffic
+
+**Recovery:** restart fail2ban (or reload it) after any firewalld
+reload/restart so it re-runs `actionstart` and re-applies bans from
+the database:
 
 ```bash
-# Prefer reload over restart to minimise disruption
-sudo firewall-cmd --reload
+sudo firewall-cmd --reload && sudo systemctl restart fail2ban
 ```
 
-### Verify permanent rules
+Module 13 (Scenario 3) walks through diagnosing exactly this failure mode, and
+shows how a `PartOf=firewalld.service` drop-in can automate the recovery.
+
+### Verify what is (not) in the permanent layer
 
 ```bash
-# Check what is in the permanent configuration
+# Fail2ban bans never appear in the permanent configuration:
 sudo firewall-cmd --permanent --list-rich-rules
-sudo firewall-cmd --permanent --get-ipsets
+sudo firewall-cmd --permanent --direct --get-all-rules
 ```
 
 [↑ Back to TOC](#table-of-contents)
@@ -548,25 +609,27 @@ be enforced.
 ### Verify systemd ordering
 
 ```bash
-cat /usr/lib/systemd/system/fail2ban.service | grep After
+grep After /usr/lib/systemd/system/fail2ban.service
 ```
 
 Expected:
 
 ```ini
-After=network.target iptables.service firewalld.service nftables.service
+After=network.target iptables.service firewalld.service ip6tables.service ipset.service nftables.service
 ```
 
-The `After=firewalld.service` line ensures fail2ban starts after firewalld.
+The `After=firewalld.service` entry ensures fail2ban starts after firewalld
+**when both are started together** (e.g. at boot). Note that `After=` is only
+an ordering hint — it does not restart fail2ban if firewalld is restarted
+later (see Module 13).
 
 ### What happens at startup
 
 1. `firewalld.service` starts — firewall daemon ready
 2. `fail2ban.service` starts — reads config
 3. For each enabled jail, fail2ban runs `actionstart`:
-   - Creates the ipset if it does not exist
-   - Adds the rich rule if it does not exist
-   - Reloads firewalld to activate permanent rules
+   - Creates the kernel ipset if it does not exist (ipset action)
+   - Adds the direct rule / prepares rich-rule infrastructure
 4. Fail2ban reads the SQLite database and re-applies unexpired bans
 
 ### If fail2ban starts before firewalld
@@ -588,34 +651,38 @@ sudo systemctl restart fail2ban
 
 ## 12. Lab 08 — Deep Firewalld Integration Inspection
 
-### Step 1 — Baseline firewalld state
+> **Prerequisite:** the lab assumes `banaction = firewallcmd-ipset` in your
+> `jail.local` (Module 04). With the EPEL default rich-rules action, substitute
+> `firewall-cmd --list-rich-rules` for the ipset commands.
+
+### Step 1 — Baseline firewall state
 
 ```bash
 echo "=== Baseline firewalld state ==="
 sudo firewall-cmd --list-all
 echo ""
-echo "=== Current ipsets ==="
-sudo firewall-cmd --get-ipsets
+echo "=== Current fail2ban kernel ipsets ==="
+sudo ipset list -n | grep f2b
 ```
 
 ### Step 2 — Examine existing fail2ban ipsets
 
 ```bash
-for ipset in $(sudo firewall-cmd --get-ipsets | tr ' ' '\n' | grep fail2ban); do
-  echo "=== ipset: $ipset ==="
-  sudo firewall-cmd --info-ipset=$ipset
+for s in $(sudo ipset list -n | grep f2b); do
+  echo "=== ipset: $s ==="
+  sudo ipset list "$s"
   echo ""
 done
 ```
 
-### Step 3 — Ban a test IP and trace every firewalld change
+### Step 3 — Ban a test IP and trace every firewall change
 
 Open two terminals:
 
-**Terminal 1** — watch firewalld state:
+**Terminal 1** — watch the ipset members:
 
 ```bash
-watch -n 1 "sudo firewall-cmd --ipset=fail2ban-sshd --get-entries 2>/dev/null"
+watch -n 1 "sudo ipset list f2b-sshd 2>/dev/null | sed -n '/Members:/,\$p'"
 ```
 
 **Terminal 2** — trigger the ban:
@@ -632,75 +699,86 @@ Watch Terminal 1 update — you should see `203.0.113.55` appear.
 # Fail2ban layer
 sudo fail2ban-client status sshd | grep "Banned IP"
 
-# Firewalld ipset layer
-sudo firewall-cmd --ipset=fail2ban-sshd --get-entries
+# Kernel ipset layer
+sudo ipset list f2b-sshd | sed -n '/Members:/,$p'
 
-# Firewalld rich rule layer
-sudo firewall-cmd --list-rich-rules
+# Firewalld direct-rule layer (the rule that matches the set)
+sudo firewall-cmd --direct --get-all-rules | grep f2b-sshd
 
 # nftables kernel layer
-sudo nft list ruleset 2>/dev/null | grep -A3 "fail2ban" | head -20
+sudo nft list ruleset 2>/dev/null | grep -B2 -A2 "f2b" | head -20
 ```
 
 ### Step 5 — Query a specific entry
 
 ```bash
-sudo firewall-cmd --ipset=fail2ban-sshd --query-entry=203.0.113.55
+sudo ipset test f2b-sshd 203.0.113.55
 ```
 
-Expected: `yes`
+Expected: `203.0.113.55 is in set f2b-sshd.`
 
-### Step 6 — Simulate a firewalld reload
+### Step 6 — Simulate a firewalld reload (and observe the enforcement gap)
 
 ```bash
-echo "Before reload:"
-sudo firewall-cmd --ipset=fail2ban-sshd --get-entries
+echo "Direct rule before reload:"
+sudo firewall-cmd --direct --get-all-rules | grep f2b-sshd
 
 sudo firewall-cmd --reload
 
-echo "Immediately after reload:"
-sudo firewall-cmd --ipset=fail2ban-sshd --get-entries
+echo "Direct rule after reload:"
+sudo firewall-cmd --direct --get-all-rules | grep f2b-sshd || echo "GONE — ban no longer enforced!"
 
-sleep 10
-
-echo "10 seconds after reload:"
-sudo firewall-cmd --ipset=fail2ban-sshd --get-entries
+echo "ipset entries after reload (set survives, but nothing matches it):"
+sudo ipset list f2b-sshd | sed -n '/Members:/,$p'
 ```
 
-Observe how fail2ban re-applies the ban after the reload.
+The reload wiped fail2ban's runtime rule. The ipset and its entries survive,
+but **no firewall rule references them anymore** — the ban is not enforced.
+Recover by restarting fail2ban:
+
+```bash
+sudo systemctl restart fail2ban
+sleep 3
+sudo firewall-cmd --direct --get-all-rules | grep f2b-sshd
+sudo ipset test f2b-sshd 203.0.113.55
+```
+
+The rule is back and the ban (restored from the SQLite database) is enforced
+again.
 
 ### Step 7 — Clean up
 
 ```bash
 sudo fail2ban-client set sshd unbanip 203.0.113.55
-sudo firewall-cmd --ipset=fail2ban-sshd --get-entries
+sudo ipset list f2b-sshd | sed -n '/Members:/,$p'
 ```
 
-Expected: empty list.
+Expected: no members.
 
-### Step 8 — Check permanent vs runtime config
+### Step 8 — Confirm fail2ban leaves the permanent config alone
 
 ```bash
 echo "=== Permanent rich rules ==="
 sudo firewall-cmd --permanent --list-rich-rules
 
 echo ""
-echo "=== Runtime rich rules ==="
-sudo firewall-cmd --list-rich-rules
+echo "=== Permanent direct rules ==="
+sudo firewall-cmd --permanent --direct --get-all-rules
 ```
 
-Both should show the same `fail2ban-sshd` ipset rule.
+Both should be empty (unless you added permanent rules yourself) — everything
+fail2ban manages is runtime-only.
 
 ### Lab Complete ✓
 
 **Self-check — verify you can answer yes to each:**
 
-- [ ] `firewall-cmd --get-ipsets` lists at least one `f2b-*` ipset
-- [ ] `firewall-cmd --ipset=f2b-sshd --get-entries` shows current bans (or empty if none active)
+- [ ] `ipset list -n` lists at least one `f2b-*` ipset
+- [ ] `ipset list f2b-sshd` shows current bans under `Members:` (or none if no bans active)
 - [ ] I can trace a ban all the way from fail2ban status → ipset entry → nftables rule using `nft list ruleset`
-- [ ] I understand why fail2ban bans are *runtime* rules (they are cleared on firewalld restart — that is intentional)
-- [ ] I know the performance difference between `firewallcmd-ipset` (O(1)) and `firewallcmd-new` (O(n))
-- [ ] `systemctl list-dependencies fail2ban` shows `firewalld` as a dependency
+- [ ] I understand why fail2ban bans are *runtime* rules and what a firewalld reload does to them
+- [ ] I know the performance difference between `firewallcmd-ipset` (O(1)) and `firewallcmd-rich-rules` (O(n))
+- [ ] I demonstrated the reload gap in Step 6 and recovered with a fail2ban restart
 
 [↑ Back to TOC](#table-of-contents)
 
@@ -711,17 +789,19 @@ Both should show the same `fail2ban-sshd` ipset rule.
 In this module you learned:
 
 - **Why firewalld** is used on RHEL 10: it manages nftables via a D-Bus API
-- **Firewalld concepts**: zones, rich rules, and ipsets
-- **How fail2ban communicates** with firewalld via `firewall-cmd` shell calls
+- **Firewalld concepts**: zones, rich rules, and ipsets (firewalld-managed vs raw kernel)
+- **How fail2ban enforces bans**: `firewall-cmd` rich rules (EPEL default) or
+  raw `ipset` sets + one `--direct` rule (ipset action)
 - **Three firewalld actions** compared:
-  - `firewallcmd-ipset` — ipset-based, O(1) performance, production-ready
-  - `firewallcmd-new` — one rich rule per IP, easy inspection, testing only
-  - `firewallcmd-allports` — block all ports from banned IP
-- **Zone selection**: default is `public`, use `drop` for strict environments
-- **Verifying bans** at every layer: fail2ban status, ipset entries, rich rules, nftables
-- **IPv6 support** with separate ipsets per jail
-- **Permanent vs runtime** rules: why fail2ban uses runtime entries for bans
-- **Startup order**: firewalld must start before fail2ban (enforced by systemd)
+  - `firewallcmd-rich-rules` — one rich rule per IP, EPEL default, easy inspection
+  - `firewallcmd-ipset` — kernel ipset, O(1) performance, best at scale
+  - `firewallcmd-allports` — per-IP direct rules blocking all ports
+- **Zones**: rich rules land in the default zone; direct rules bypass zones entirely
+- **Verifying bans** at every layer: fail2ban status, `ipset list`, rich rules, direct rules, nftables
+- **IPv6 support** with separate `f2b-<jail>6` ipsets
+- **Runtime-only enforcement**: a firewalld reload wipes fail2ban's rules —
+  restart fail2ban to recover
+- **Startup order**: firewalld must start before fail2ban (`After=` ordering at boot)
 
 ### Next Steps
 

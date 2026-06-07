@@ -116,7 +116,8 @@ Every module includes:
 | `/etc/fail2ban/jail.d/` | Additional jail drop-in files |
 | `/etc/fail2ban/filter.d/` | Filter (regex) definitions |
 | `/etc/fail2ban/action.d/` | Action definitions |
-| `/var/log/fail2ban.log` | Fail2ban activity log |
+| `journalctl -u fail2ban` | Fail2ban activity log (RHEL 10 default — journald) |
+| `/var/log/fail2ban.log` | Fail2ban activity log (only if `logtarget` is set to a file) |
 | `/var/lib/fail2ban/fail2ban.sqlite3` | Ban persistence database |
 | `/var/run/fail2ban/fail2ban.sock` | Unix socket for client comms |
 
@@ -147,9 +148,10 @@ fail2ban-client set sshd unbanip 1.2.3.4
 fail2ban-client -t
 fail2ban-regex /var/log/secure /etc/fail2ban/filter.d/sshd.conf
 
-# Firewalld verification
-firewall-cmd --list-rich-rules
-firewall-cmd --info-ipset=fail2ban-sshd
+# Firewall verification
+firewall-cmd --list-rich-rules           # default EPEL action (firewallcmd-rich-rules)
+ipset list f2b-sshd                      # firewallcmd-ipset action (course recommendation)
+nft list ruleset | grep f2b              # kernel-level view (works for both)
 ```
 
 [↑ Back to TOC](#table-of-contents)

@@ -17,8 +17,11 @@
 # NAGIOS/ICINGA COMPATIBLE: exits 0=OK, 1=WARNING, 2=CRITICAL
 #
 # Reference: Module 12 — Healthchecks and Monitoring (Section 9)
+#
+# NOTE: deliberately no `set -e` / `pipefail` — a healthcheck must keep
+# running and REPORT failures, not die on the first failed command.
 
-set -euo pipefail
+set -u
 
 # ============================================================
 # Configuration — adjust these for your environment
@@ -111,16 +114,22 @@ for jail in "${OPTIONAL_JAILS[@]}"; do
 done
 
 # ============================================================
-# CHECK 6: firewalld ipsets exist for active jails
+# CHECK 6: kernel ipsets + enforcement rules exist for active jails
+# (assumes banaction = firewallcmd-ipset; adjust for rich-rules setups)
 # ============================================================
-IPSETS=$(firewall-cmd --get-ipsets 2>/dev/null)
+DIRECT_RULES=$(firewall-cmd --direct --get-all-rules 2>/dev/null)
 for jail in "${REQUIRED_JAILS[@]}"; do
   IPSET="f2b-${jail}"
-  if echo "$IPSETS" | grep -qw "$IPSET"; then
-    ENTRY_COUNT=$(firewall-cmd --ipset="$IPSET" --get-entries 2>/dev/null | wc -l)
-    ok "ipset '$IPSET' exists ($ENTRY_COUNT entries)"
+  if ipset list -n 2>/dev/null | grep -qx "$IPSET"; then
+    ENTRY_COUNT=$(ipset list "$IPSET" -terse 2>/dev/null | sed -n 's/^Number of entries: //p')
+    ok "ipset '$IPSET' exists (${ENTRY_COUNT:-0} entries)"
+    if echo "$DIRECT_RULES" | grep -qw "$IPSET"; then
+      ok "enforcement rule for '$IPSET' present"
+    else
+      crit "ipset '$IPSET' has NO enforcement rule — bans not enforced (firewalld reloaded? restart fail2ban)"
+    fi
   else
-    warn "ipset '$IPSET' does not exist (no active bans or firewalld was recently restarted)"
+    warn "ipset '$IPSET' does not exist (jail not started yet?)"
   fi
 done
 
@@ -179,8 +188,9 @@ fi
 
 # ============================================================
 # CHECK 11: Recent SELinux denials for fail2ban
+# (grep -c prints 0 itself when nothing matches — no fallback needed)
 # ============================================================
-AVC_COUNT=$(ausearch -m avc -ts recent --no-pager 2>/dev/null | grep -c "fail2ban" || echo 0)
+AVC_COUNT=$(ausearch -m avc -ts recent --no-pager 2>/dev/null | grep -c "fail2ban")
 if (( AVC_COUNT > 0 )); then
   warn "$AVC_COUNT recent SELinux AVC denial(s) related to fail2ban — run: sudo ausearch -m avc -ts recent | grep fail2ban"
 else

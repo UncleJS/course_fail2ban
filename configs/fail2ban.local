@@ -15,12 +15,13 @@
 loglevel = INFO
 
 # Where fail2ban writes its own log.
-# SYSLOG  → journald (RHEL 10 default — query with journalctl -u fail2ban)
+# SYSTEMD-JOURNAL → journald (RHEL 10 default, set by the fail2ban-systemd
+#                   package — query with journalctl -u fail2ban)
 # /var/log/fail2ban.log → flat file (required if using flat-file recidive)
 #
-# IMPORTANT: If you change this from SYSLOG to a file path, you must also
-# update your recidive jail config. See configs/jail.d/recidive.conf.
-logtarget = SYSLOG
+# IMPORTANT: If you change this to a file path, you must also update your
+# recidive jail config. See configs/jail.d/recidive.conf.
+logtarget = SYSTEMD-JOURNAL
 
 # How long (in seconds) ban history is kept in the SQLite database.
 # Must be LONGER than the recidive jail findtime (default: 12h = 43200s).

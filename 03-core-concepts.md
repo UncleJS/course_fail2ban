@@ -134,7 +134,8 @@ ignoreregex =
 ### The critical `<HOST>` capture group
 
 Every filter must include `<HOST>` in its `failregex`. This is a special
-placeholder that fail2ban replaces with a regex that matches IPv4 and IPv6
+placeholder that fail2ban replaces with a regex (approximately
+`(?:::f{4,6}:)?(?P<host>[\w\-.^_]+)`) that matches IPv4 and IPv6
 addresses. The matched IP is what gets banned.
 
 ```
@@ -175,31 +176,39 @@ Because RHEL 10 uses firewalld, the relevant action files are:
 
 | Action File | Method | Best For |
 |-------------|--------|----------|
-| `firewallcmd-ipset.conf` | Adds IP to a firewalld-managed ipset | **Recommended** — high performance, scales to thousands of IPs |
-| `firewallcmd-new.conf` | Adds a rich rule per IP | Small deployments, easy to inspect with `firewall-cmd --list-rich-rules` |
-| `firewallcmd-allports.conf` | Blocks all ports from the IP | Maximum blocking |
+| `firewallcmd-rich-rules.conf` | Adds one firewalld rich rule per banned IP | **EPEL default** (set by `jail.d/00-firewalld.conf`) — easy to inspect with `firewall-cmd --list-rich-rules` |
+| `firewallcmd-ipset.conf` | Adds IP to a kernel ipset (`f2b-<jail>`) matched by one firewall rule | **Recommended at scale** — high performance, thousands of IPs |
+| `firewallcmd-allports.conf` | Per-IP rule in a dedicated chain, blocks all ports | Maximum blocking (e.g., recidive jail) |
 | `firewallcmd-rich-logging.conf` | Rich rules with packet logging | Audit trail requirements |
 
 ### What an action file contains
 
-An action file has three sections:
+An action file defines commands for each lifecycle stage. Simplified from the
+real `firewallcmd-ipset.conf`:
 
 ```ini
 [Definition]
-# Command run when the service starts (creates the ipset, etc.)
-actionstart = firewall-cmd --permanent --new-ipset=<ipsetname> --type=hash:ip ...
-              firewall-cmd --reload
+# Command run when the jail starts: create the ipset and one firewall
+# rule that matches every IP in the set
+actionstart = ipset -exist create <ipmset> hash:ip maxelem 65536
+              firewall-cmd --direct --add-rule ipv4 filter <chain> 0 \
+                -p tcp -m multiport --dports <port> \
+                -m set --match-set <ipmset> src -j REJECT
 
-# Command run to BAN an IP
-actionban   = firewall-cmd --ipset=<ipsetname> --add-entry=<ip>
+# Command run to BAN an IP (just adds it to the set — O(1))
+actionban   = ipset -exist add <ipmset> <ip>
 
 # Command run to UNBAN an IP
-actionunban = firewall-cmd --ipset=<ipsetname> --remove-entry=<ip>
+actionunban = ipset -exist del <ipmset> <ip>
 
-# Command run when the service stops (cleanup)
-actionstop  = firewall-cmd --permanent --delete-ipset=<ipsetname> ...
-              firewall-cmd --reload
+# Command run when the jail stops (cleanup)
+actionstop  = firewall-cmd --direct --remove-rule ipv4 filter <chain> 0 ...
+              ipset flush <ipmset>
+              ipset destroy <ipmset>
 ```
+
+Note that the ipset itself is managed with the `ipset` binary — firewalld only
+provides the single rule that matches against the set.
 
 ### Action parameters
 
@@ -211,7 +220,7 @@ Actions use placeholder variables that fail2ban substitutes at runtime:
 | `<port>` | The port(s) specified in the jail |
 | `<protocol>` | tcp/udp |
 | `<name>` | The jail name |
-| `<ipsetname>` | Auto-generated ipset name (e.g., `fail2ban-sshd`) |
+| `<ipmset>` | Auto-generated ipset name (e.g., `f2b-sshd`) |
 
 [↑ Back to TOC](#table-of-contents)
 
@@ -345,11 +354,12 @@ bantime = -1      # Permanent (until manually unbanned)
 
 ### Incremental ban times
 
-Fail2ban 0.11+ supports **multiplier-based ban time escalation**:
+Fail2ban 0.11+ supports **ban time escalation** for repeat offenders. With the
+default formula, each new ban of the same IP doubles the duration:
 
 ```ini
 bantime.increment   = true
-bantime.multiplier  = 2
+bantime.factor      = 1        # scales the default doubling formula
 bantime.maxtime     = 604800   # cap at 1 week
 
 # First ban:  bantime * 1  = 1 hour
@@ -357,6 +367,10 @@ bantime.maxtime     = 604800   # cap at 1 week
 # Third ban:  bantime * 4  = 4 hours
 # ...up to maxtime
 ```
+
+(The related options are `bantime.factor`, `bantime.formula`, and
+`bantime.multipliers` — note the plural. There is no `bantime.multiplier`
+option. Module 10 covers these in depth.)
 
 [↑ Back to TOC](#table-of-contents)
 
@@ -435,10 +449,10 @@ Is IP already banned?
   No  │
        ▼
 Run actionban:
-  firewall-cmd --ipset=fail2ban-sshd --add-entry=<ip>
+  ipset add f2b-sshd <ip>
        │
        ▼
-Write to fail2ban.log:
+Log the ban event:
   "Ban 185.220.101.5"
        │
        ▼
@@ -450,10 +464,10 @@ Start ban timer countdown
        │
        ▼ (after bantime seconds)
 Run actionunban:
-  firewall-cmd --ipset=fail2ban-sshd --remove-entry=<ip>
+  ipset del f2b-sshd <ip>
        │
        ▼
-Write to fail2ban.log:
+Log the unban event:
   "Unban 185.220.101.5"
        │
        ▼
@@ -534,9 +548,8 @@ logpath  = /var/log/secure
     ────────────────                ─────────────────────────
     [Definition]                    [Definition]
     failregex =                     actionban =
-      Failed \S+ for .*               firewall-cmd
-      from <HOST>                       --ipset=fail2ban-sshd
-                                        --add-entry=<ip>
+      Failed \S+ for .*               ipset add
+      from <HOST>                       f2b-sshd <ip>
                 │                              │
                 ▼                              ▼
          Detects bad IP              Blocks IP in firewalld
@@ -607,14 +620,17 @@ sudo sqlite3 /var/lib/fail2ban/fail2ban.sqlite3 \
    FROM bans ORDER BY timeofban DESC LIMIT 5;"
 ```
 
-### Step 6 — Verify a banned IP is in firewalld
+### Step 6 — Verify a banned IP is enforced at the firewall
 
 ```bash
 # Get the list of currently banned IPs
 BANNED_IP=$(sudo fail2ban-client status sshd | grep "Banned IP" | awk '{print $NF}' | cut -d' ' -f1)
 
-# Check if it's in the firewalld ipset
-sudo firewall-cmd --info-ipset=fail2ban-sshd 2>/dev/null || echo "ipset may not exist yet"
+# With the EPEL default action (firewallcmd-rich-rules):
+sudo firewall-cmd --list-rich-rules
+
+# With the firewallcmd-ipset action (configured in Module 04):
+sudo ipset list f2b-sshd 2>/dev/null || echo "ipset may not exist yet"
 ```
 
 ### Lab Complete ✓

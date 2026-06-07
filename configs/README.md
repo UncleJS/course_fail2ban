@@ -42,9 +42,9 @@ sudo fail2ban-client status sshd
 
 ```bash
 # 1. Check your logtarget
-sudo fail2ban-client get fail2ban logtarget
-#  SYSLOG or SYSTEMD-JOURNAL → use Option A (default in recidive.conf)
-#  /var/log/fail2ban.log      → use Option B (edit recidive.conf first)
+sudo fail2ban-client get logtarget
+#  SYSTEMD-JOURNAL or SYSLOG → use Option A (default in recidive.conf)
+#  /var/log/fail2ban.log     → use Option B (edit recidive.conf first)
 
 # 2. Install the systemd filter (Option A only)
 sudo cp configs/filter.d/recidive-systemd.conf /etc/fail2ban/filter.d/

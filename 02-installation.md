@@ -98,19 +98,28 @@ Key facts about EPEL:
 
 ## 3. Enable the EPEL Repository
 
-### Option A — Via dnf (recommended)
+### Option A — On RHEL proper (subscription-based)
+
+On genuine RHEL, `epel-release` is **not** in the default repos. Install it from
+the Fedora URL, and first enable the CodeReady Builder repository (EPEL packages
+depend on it):
+
+```bash
+# 1. Enable CodeReady Builder (CRB) — required by many EPEL packages
+sudo subscription-manager repos --enable codeready-builder-for-rhel-10-$(arch)-rpms
+
+# 2. Install epel-release from the Fedora project
+sudo dnf install -y \
+  https://dl.fedoraproject.org/pub/epel/epel-release-latest-10.noarch.rpm
+```
+
+### Option B — On AlmaLinux / Rocky Linux
+
+The clones ship `epel-release` in their own repos, so a plain install works:
 
 ```bash
 sudo dnf install -y epel-release
-```
-
-If this fails (EPEL package not found in default repos), use Option B.
-
-### Option B — Via direct RPM URL
-
-```bash
-sudo dnf install -y \
-  https://dl.fedoraproject.org/pub/epel/epel-release-latest-10.noarch.rpm
+sudo dnf config-manager --set-enabled crb   # enable CRB equivalent
 ```
 
 ### Verify EPEL is enabled
@@ -122,12 +131,6 @@ sudo dnf repolist | grep epel
 **Expected output:**
 ```
 epel                Extra Packages for Enterprise Linux 10 - x86_64
-```
-
-### Optional — Enable EPEL Next (newer packages)
-
-```bash
-sudo dnf install -y epel-next-release
 ```
 
 ### Refresh the package cache
@@ -201,14 +204,18 @@ Installing:
  fail2ban               noarch          1.1.0-1.el10    epel               17 k
 Installing dependencies:
  fail2ban-firewalld     noarch          1.1.0-1.el10    epel               14 k
+ fail2ban-sendmail      noarch          1.1.0-1.el10    epel               15 k
  fail2ban-server        noarch          1.1.0-1.el10    epel              468 k
- python3-pyinotify      noarch          ...             epel              ...
+ fail2ban-systemd       noarch          1.1.0-1.el10    epel               14 k
+ python3-systemd        ...
 ...
 
 Installed:
   fail2ban-1.1.0-1.el10.noarch
   fail2ban-firewalld-1.1.0-1.el10.noarch
+  fail2ban-sendmail-1.1.0-1.el10.noarch
   fail2ban-server-1.1.0-1.el10.noarch
+  fail2ban-systemd-1.1.0-1.el10.noarch
   ...
 ```
 
@@ -216,16 +223,18 @@ Installed:
 
 | Package | Purpose |
 |---------|---------|
-| `fail2ban` | Meta-package, pulls in all components |
-| `fail2ban-server` | The core daemon and filters |
-| `fail2ban-firewalld` | firewalld-specific action files (critical for RHEL 10) |
-| `fail2ban-sendmail` | Email notification actions (optional) |
+| `fail2ban` | Meta-package, pulls in all components below |
+| `fail2ban-server` | The core daemon, filters, and actions |
+| `fail2ban-firewalld` | Drop-in that makes firewalld actions the default (`jail.d/00-firewalld.conf`) |
+| `fail2ban-systemd` | Drop-ins that set the journald backend and journal logging (`00-systemd.conf`) |
+| `fail2ban-sendmail` | Email notification actions |
 | `fail2ban-all` | Every optional component |
 
-> **For RHEL 10 with firewalld:** The `fail2ban-firewalld` package is essential.
-> It provides the `firewallcmd-ipset.conf` and related action files that
-> integrate with firewalld. It is installed automatically when you install
-> `fail2ban`.
+> **For RHEL 10:** Two drop-in packages do the distro integration for you.
+> `fail2ban-firewalld` sets `banaction = firewallcmd-rich-rules` so bans go
+> through firewalld, and `fail2ban-systemd` sets `backend = systemd` and
+> `logtarget = SYSTEMD-JOURNAL` so fail2ban reads from — and logs to — the
+> systemd journal. Both are installed automatically with `fail2ban`.
 
 [↑ Back to TOC](#table-of-contents)
 
@@ -262,16 +271,19 @@ drwxr-xr-x.  2 root root 4096 Jan 10 10:00 filter.d
 
 ```bash
 # Action definitions (what to do when banning)
-ls /etc/fail2ban/action.d/ | head -10
+ls /etc/fail2ban/action.d/ | grep firewallcmd
 ```
 ```
 firewallcmd-allports.conf
+firewallcmd-common.conf
 firewallcmd-ipset.conf
+firewallcmd-multiport.conf
 firewallcmd-new.conf
 firewallcmd-rich-logging.conf
-iptables-allports.conf    # (ignore these - we use firewalld)
-...
+firewallcmd-rich-rules.conf
 ```
+
+(The `iptables-*` action files are also present — ignore them, we use firewalld.)
 
 ```bash
 # Filter definitions (what patterns to detect)
@@ -296,9 +308,14 @@ ls /var/run/fail2ban/       # socket and PID file
 # Persistent data
 ls /var/lib/fail2ban/       # SQLite ban database
 
-# Log file
-ls /var/log/fail2ban.log    # created after first start
+# Fail2ban's own log — goes to the systemd journal on RHEL 10
+# (the fail2ban-systemd package sets logtarget = SYSTEMD-JOURNAL)
+journalctl -u fail2ban --no-pager -n 5
 ```
+
+> **Note:** `/var/log/fail2ban.log` is **not** created on a default RHEL 10
+> install. It only appears if you change `logtarget` to a file path
+> (covered in Module 10).
 
 [↑ Back to TOC](#table-of-contents)
 
@@ -385,27 +402,27 @@ sudo fail2ban-client status
 ```
 ```
 Status
-|- Number of jail:      1
-`- Jail list:   sshd
+|- Number of jail:      0
+`- Jail list:
 ```
 
-> By default on RHEL 10 with the `fail2ban-firewalld` package, the `sshd` jail
-> is often pre-enabled. You will configure jails properly in Module 05.
+> **All jails are disabled by default** on a fresh install — fail2ban runs but
+> protects nothing yet. You will enable the `sshd` jail in Module 04 and
+> configure jails properly in Module 05.
 
 ### Check 5 — Check the log
 
+On RHEL 10 fail2ban logs to the systemd journal (set by `fail2ban-systemd`):
+
 ```bash
-sudo tail -20 /var/log/fail2ban.log
+sudo journalctl -u fail2ban -n 20 --no-pager
 ```
 ```
-2026-01-10 10:05:32,410 fail2ban.server         [12346]: INFO    --------------------------------------------------
-2026-01-10 10:05:32,410 fail2ban.server         [12346]: INFO    Starting Fail2ban v1.1.0
-2026-01-10 10:05:32,415 fail2ban.database        [12346]: INFO    Connected to fail2ban persistent database '/var/lib/fail2ban/fail2ban.sqlite3'
-2026-01-10 10:05:32,520 fail2ban.jail            [12346]: INFO    Creating new jail 'sshd'
-2026-01-10 10:05:32,521 fail2ban.jail            [12346]: INFO    Jail 'sshd' uses systemd {}
-2026-01-10 10:05:32,530 fail2ban.jail            [12346]: INFO    Initiated 'systemd' backend
-2026-01-10 10:05:32,540 fail2ban.actions          [12346]: INFO    Set banAction to 'firewallcmd-ipset'
-2026-01-10 10:05:32,550 fail2ban.jail            [12346]: INFO    Jail 'sshd' started
+Jan 10 10:05:32 server systemd[1]: Starting Fail2Ban Service...
+Jan 10 10:05:32 server fail2ban-server[12346]: 2026-01-10 10:05:32,410 fail2ban.server [12346]: INFO --------------------------------------------------
+Jan 10 10:05:32 server fail2ban-server[12346]: 2026-01-10 10:05:32,410 fail2ban.server [12346]: INFO Starting Fail2ban v1.1.0
+Jan 10 10:05:32 server fail2ban-server[12346]: 2026-01-10 10:05:32,415 fail2ban.database [12346]: INFO Connected to fail2ban persistent database '/var/lib/fail2ban/fail2ban.sqlite3'
+Jan 10 10:05:32 server systemd[1]: Started Fail2Ban Service.
 ```
 
 ### Check 6 — Verify firewalld socket is accessible
@@ -435,7 +452,8 @@ Understanding the directory layout is crucial for configuration:
 ├── jail.conf              ← All jail definitions (DON'T EDIT)
 ├── jail.local             ← Your jail overrides (CREATE THIS)
 ├── jail.d/                ← Drop-in jail config files
-│   └── 00-firewalld.conf  ← firewalld defaults (from fail2ban-firewalld pkg)
+│   ├── 00-firewalld.conf  ← firewalld defaults (from fail2ban-firewalld pkg)
+│   └── 00-systemd.conf    ← journald backend default (from fail2ban-systemd pkg)
 │
 ├── filter.d/              ← Regex filter definitions
 │   ├── sshd.conf          ← SSH filter
@@ -443,9 +461,9 @@ Understanding the directory layout is crucial for configuration:
 │   └── ...                ← Many more built-in filters
 │
 ├── action.d/              ← Ban/unban action scripts
-│   ├── firewallcmd-ipset.conf     ← firewalld ipset action (recommended)
-│   ├── firewallcmd-new.conf       ← firewalld rich-rules action
-│   ├── firewallcmd-allports.conf  ← firewalld block all ports
+│   ├── firewallcmd-rich-rules.conf ← firewalld rich rules (EPEL default)
+│   ├── firewallcmd-ipset.conf      ← ipset-based action (recommended at scale)
+│   ├── firewallcmd-allports.conf   ← block all ports from banned IP
 │   └── ...
 │
 ├── paths-common.conf      ← Log paths for common distros
@@ -528,8 +546,16 @@ sudo systemctl is-active firewalld && echo "firewalld: running" || echo "firewal
 
 ### Step 2 — Enable EPEL
 
+Use the option matching your distribution (see Section 3):
+
 ```bash
-sudo dnf install -y epel-release
+# RHEL proper:
+sudo subscription-manager repos --enable codeready-builder-for-rhel-10-$(arch)-rpms
+sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-10.noarch.rpm
+
+# AlmaLinux / Rocky Linux:
+# sudo dnf install -y epel-release && sudo dnf config-manager --set-enabled crb
+
 sudo dnf makecache
 sudo dnf repolist | grep epel
 ```
@@ -591,7 +617,9 @@ rpm -qa | grep fail2ban
 ```
 fail2ban-1.1.0-1.el10.noarch
 fail2ban-firewalld-1.1.0-1.el10.noarch
+fail2ban-sendmail-1.1.0-1.el10.noarch
 fail2ban-server-1.1.0-1.el10.noarch
+fail2ban-systemd-1.1.0-1.el10.noarch
 ```
 
 ### Step 8 — Explore the directory structure
@@ -604,16 +632,16 @@ Take a moment to note the number of filter files and action files installed.
 
 ### Lab Complete ✓
 
-You now have a working fail2ban installation. The default configuration has the
-`sshd` jail active, which is already protecting your SSH service.
+You now have a working fail2ban installation. No jails are enabled yet — you
+will enable the `sshd` jail in Module 04.
 
 **Self-check — verify you can answer yes to each:**
 
 - [ ] `fail2ban-client ping` returns `pong`
 - [ ] `fail2ban-client --version` shows the installed version
 - [ ] `systemctl is-active fail2ban` returns `active`
-- [ ] `fail2ban-client status` shows `sshd` in the jail list
-- [ ] `firewall-cmd --get-ipsets` lists the `fail2ban-sshd` ipset
+- [ ] `fail2ban-client status` shows `Number of jail: 0` (nothing enabled yet — expected)
+- [ ] `journalctl -u fail2ban -n 5` shows fail2ban startup messages
 - [ ] I can locate `/etc/fail2ban/jail.local` (or know it needs to be created)
 
 [↑ Back to TOC](#table-of-contents)
@@ -628,7 +656,8 @@ In this module you:
 - Learned about EPEL and why fail2ban requires it
 - Enabled the EPEL repository
 - Verified firewalld was running (a prerequisite for fail2ban on RHEL 10)
-- Installed the `fail2ban`, `fail2ban-server`, and `fail2ban-firewalld` packages
+- Installed the `fail2ban` meta-package and its components, including
+  `fail2ban-firewalld` (firewalld defaults) and `fail2ban-systemd` (journald defaults)
 - Explored the installed file structure
 - Enabled and started the `fail2ban.service`
 - Verified all components are working

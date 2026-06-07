@@ -37,23 +37,28 @@ maxretry = 5
 
 # ---------------------------------------------------------------------------
 # Incremental banning (optional — uncomment to enable)
-# Each re-offence doubles the ban time, up to 1 week.
+# With factor = 1, each re-offence doubles the ban time, up to 1 week.
+# (Valid options: bantime.factor, bantime.multipliers (plural),
+#  bantime.formula, bantime.rndtime, bantime.overalljails)
 # ---------------------------------------------------------------------------
-# bantime.increment  = true
-# bantime.multiplier = 2
-# bantime.maxtime    = 1w
+# bantime.increment = true
+# bantime.factor    = 1
+# bantime.maxtime   = 1w
 
 # ---------------------------------------------------------------------------
 # RHEL 10 + firewalld integration
-# firewallcmd-ipset  → adds IP to an ipset (efficient, recommended)
-# firewallcmd-allports → rich rule blocking all ports (use for recidive)
+# firewallcmd-ipset    → kernel ipset + one --direct rule (efficient at scale;
+#                        overrides the EPEL default firewallcmd-rich-rules)
+# firewallcmd-allports → per-IP --direct rules blocking all ports (recidive)
+# Verify ipset bans with:  ipset list f2b-<jail>
 # ---------------------------------------------------------------------------
 banaction          = firewallcmd-ipset
 banaction_allports = firewallcmd-allports
 
 # ---------------------------------------------------------------------------
-# Backend: systemd reads from journald (recommended for RHEL 10).
-# Change to 'auto' or 'polling' only if your service does NOT use journald.
+# Backend: systemd reads from journald (the EPEL default on RHEL 10).
+# IMPORTANT: any jail reading a flat log file (nginx, vsftpd, custom apps)
+# must override this per-jail with: backend = auto
 # ---------------------------------------------------------------------------
 backend  = systemd
 
@@ -88,16 +93,18 @@ maxretry = 3
 # enabled  = true
 # port     = http,https
 # filter   = nginx-http-auth
+# backend  = auto                       # flat file — must override systemd
 # logpath  = /var/log/nginx/error.log
 
 # [postfix]
 # enabled  = true
 # port     = smtp,465,587
 # filter   = postfix
-# logpath  = /var/log/maillog
+# # journald service — backend = systemd inherited, no logpath needed
 
 # [vsftpd]
 # enabled  = true
 # port     = ftp,ftp-data,ftps,ftps-data
 # filter   = vsftpd
+# backend  = auto                       # flat file — must override systemd
 # logpath  = /var/log/vsftpd.log

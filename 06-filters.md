@@ -155,6 +155,8 @@ addresses. The IP that matches at this position is the one that gets banned.
 
 ### What `<HOST>` expands to
 
+Approximately (the real expansion in fail2ban 1.x is more elaborate):
+
 ```
 <HOST> → (?:::f{4,6}:)?(?P<host>[\w\-.^_]+)
 ```
@@ -321,7 +323,7 @@ The journald format is similar to syslog but with additional metadata fields
 | Postfix | journald / `/var/log/maillog` | `systemd` |
 | Dovecot | journald / `/var/log/maillog` | `systemd` |
 | Firewalld | journald | `systemd` |
-| Fail2ban itself | `/var/log/fail2ban.log` | `auto` |
+| Fail2ban itself | journald (default) or `/var/log/fail2ban.log` | `systemd` / `auto` |
 
 ### Why filters from other distros may not work
 
@@ -614,7 +616,7 @@ sudo fail2ban-client status sshd
 - [ ] `fail2ban-regex` matched the expected number of failures in the SSH log sample
 - [ ] I can identify the `failregex` line(s) in `/etc/fail2ban/filter.d/sshd.conf`
 - [ ] I know how to test a filter with `fail2ban-regex <logfile> <filtername>`
-- [ ] I added a custom `failregex` to `jail.d/sshd-local.conf` (not the shipped file) and reloaded
+- [ ] I added a custom `failregex` to `filter.d/sshd.local` (not the shipped `sshd.conf`) and reloaded
 - [ ] `fail2ban-client -t` passes after my filter changes
 - [ ] I understand the difference between `failregex` (match = bad) and `ignoreregex` (match = skip)
 

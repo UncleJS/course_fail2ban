@@ -16,7 +16,7 @@
 3. [The Four Action Hooks](#3-the-four-action-hooks)
 4. [firewalld Actions on RHEL 10](#4-firewalld-actions-on-rhel-10)
 5. [firewallcmd-ipset — The Recommended Action](#5-firewallcmd-ipset--the-recommended-action)
-6. [firewallcmd-new — Rich Rules Action](#6-firewallcmd-new--rich-rules-action)
+6. [firewallcmd-rich-rules — The EPEL Default](#6-firewallcmd-rich-rules--the-epel-default)
 7. [firewallcmd-allports — Block Everything](#7-firewallcmd-allports--block-everything)
 8. [Action Parameters and Variables](#8-action-parameters-and-variables)
 9. [Email Notification Actions](#9-email-notification-actions)
@@ -108,18 +108,17 @@ protocol  = tcp
 ### actionstart
 
 Runs **once** when fail2ban starts (or the jail is activated). Used to:
-- Create firewalld ipsets
-- Add firewall rules that reference the ipset
+- Create the kernel ipset for the jail
+- Add the firewall rule that matches against the ipset
 - Set up any required infrastructure
 
 ```bash
-# Example: creates an ipset and adds it to firewalld
-actionstart = firewall-cmd --permanent --new-ipset=<ipsetname> --type=hash:ip \
-                --option=maxelem=65536 --option=hashsize=4096 \
-                --option=timeout=<bantime>
-              firewall-cmd --permanent --zone=<zone> \
-                --add-rich-rule='rule family=ipv4 source ipset=<ipsetname> drop'
-              firewall-cmd --reload
+# Example (simplified from firewallcmd-ipset.conf):
+# create the set, then one rule matching everything in it
+actionstart = ipset -exist create <ipmset> hash:ip maxelem <maxelem>
+              firewall-cmd --direct --add-rule ipv4 filter <chain> 0 \
+                -p <protocol> -m multiport --dports <port> \
+                -m set --match-set <ipmset> src -j <blocktype>
 ```
 
 ### actionban
@@ -128,7 +127,7 @@ Runs **every time an IP is banned**. Receives `<ip>` as a variable.
 
 ```bash
 # Example: add IP to the existing ipset
-actionban = firewall-cmd --ipset=<ipsetname> --add-entry=<ip>
+actionban = ipset -exist add <ipmset> <ip>
 ```
 
 ### actionunban
@@ -137,7 +136,7 @@ Runs **every time a ban expires** (or is manually lifted).
 
 ```bash
 # Example: remove IP from ipset
-actionunban = firewall-cmd --ipset=<ipsetname> --remove-entry=<ip>
+actionunban = ipset -exist del <ipmset> <ip>
 ```
 
 ### actionstop
@@ -147,11 +146,12 @@ Runs **once** when fail2ban stops (or the jail is deactivated). Used to:
 - Delete ipsets
 
 ```bash
-# Example: remove the firewall rule and ipset
-actionstop = firewall-cmd --permanent --zone=<zone> \
-               --remove-rich-rule='rule family=ipv4 source ipset=<ipsetname> drop'
-             firewall-cmd --permanent --delete-ipset=<ipsetname>
-             firewall-cmd --reload
+# Example: remove the firewall rule, then flush and destroy the ipset
+actionstop = firewall-cmd --direct --remove-rule ipv4 filter <chain> 0 \
+               -p <protocol> -m multiport --dports <port> \
+               -m set --match-set <ipmset> src -j <blocktype>
+             ipset flush <ipmset>
+             ipset destroy <ipmset>
 ```
 
 [↑ Back to TOC](#table-of-contents)
@@ -169,19 +169,23 @@ ls /etc/fail2ban/action.d/firewallcmd*
 
 ```
 /etc/fail2ban/action.d/firewallcmd-allports.conf
+/etc/fail2ban/action.d/firewallcmd-common.conf
 /etc/fail2ban/action.d/firewallcmd-ipset.conf
+/etc/fail2ban/action.d/firewallcmd-multiport.conf
 /etc/fail2ban/action.d/firewallcmd-new.conf
 /etc/fail2ban/action.d/firewallcmd-rich-logging.conf
+/etc/fail2ban/action.d/firewallcmd-rich-rules.conf
 ```
 
 ### Comparison
 
 | Action | Ban Method | Scales To | Best For |
 |--------|-----------|-----------|---------|
-| `firewallcmd-ipset` | IP added to named ipset | 100,000+ IPs | **Production — recommended** |
-| `firewallcmd-new` | One rich rule per IP | ~1,000 IPs | Dev/testing, easy inspection |
-| `firewallcmd-allports` | All-port block via ipset | 100,000+ IPs | Maximum blocking of attackers |
+| `firewallcmd-rich-rules` | One rich rule per IP | ~1,000 IPs | **EPEL default** — easy inspection |
+| `firewallcmd-ipset` | IP added to a kernel ipset | 100,000+ IPs | **Production at scale — recommended** |
+| `firewallcmd-allports` | Per-IP rule in a dedicated chain, all ports | ~1,000 IPs | Maximum blocking (recidive) |
 | `firewallcmd-rich-logging` | Rich rule + logging | ~1,000 IPs | Audit trail environments |
+| `firewallcmd-multiport` / `-new` | Per-IP `--direct` rules | ~1,000 IPs | Legacy — prefer the ones above |
 
 [↑ Back to TOC](#table-of-contents)
 
@@ -189,9 +193,9 @@ ls /etc/fail2ban/action.d/firewallcmd*
 
 ## 5. firewallcmd-ipset — The Recommended Action
 
-This is the **recommended action for RHEL 10**. It uses a firewalld-managed
-ipset (a kernel-level hash table of IPs) which performs much better than
-individual rich rules when many IPs are banned.
+This is the **recommended action for busy RHEL 10 servers**. It uses a kernel
+ipset (a hash table of IPs, managed with the `ipset` binary) which performs
+much better than individual rich rules when many IPs are banned.
 
 ```bash
 cat /etc/fail2ban/action.d/firewallcmd-ipset.conf
@@ -199,29 +203,40 @@ cat /etc/fail2ban/action.d/firewallcmd-ipset.conf
 
 ### How it works
 
-1. **actionstart**: Creates a firewalld ipset named `fail2ban-<jailname>` and
-   adds a rich rule to drop traffic from that ipset.
-2. **actionban**: Adds the offending IP to the ipset.
-3. **actionunban**: Removes the IP from the ipset.
-4. **actionstop**: Removes the rich rule and deletes the ipset.
+1. **actionstart**: Creates a kernel ipset named `f2b-<jailname>` with
+   `ipset create`, then adds **one** `firewall-cmd --direct` rule that rejects
+   traffic from any IP in that set.
+2. **actionban**: Adds the offending IP to the ipset (`ipset add`).
+3. **actionunban**: Removes the IP from the ipset (`ipset del`).
+4. **actionstop**: Removes the firewall rule, flushes and destroys the ipset.
+
+> **Note:** The set is created with the `ipset` binary, *not* with
+> `firewall-cmd --new-ipset` — so it will **not** appear in
+> `firewall-cmd --get-ipsets`. Inspect it with `ipset list` instead. Also note
+> that firewalld's `--direct` interface is deprecated (it still works on
+> RHEL 10); the rich-rules action in section 6 avoids it.
 
 ### Verifying ipset bans
 
 ```bash
 # List all fail2ban ipsets
-sudo firewall-cmd --get-ipsets | tr ' ' '\n' | grep fail2ban
+sudo ipset list -n | grep f2b
 
-# Inspect a specific ipset
-sudo firewall-cmd --info-ipset=fail2ban-sshd
+# Inspect a specific ipset (header + members)
+sudo ipset list f2b-sshd
 
-# List IPs in the ipset
-sudo firewall-cmd --ipset=fail2ban-sshd --get-entries
+# Check whether one specific IP is in the set
+sudo ipset test f2b-sshd 185.220.101.5
+
+# See the firewall rule that matches the set
+sudo firewall-cmd --direct --get-all-rules | grep f2b-sshd
 ```
 
 ### Setting this as the default in jail.local
 
 ```ini
-# In jail.local [DEFAULT] section (already set by 00-firewalld.conf)
+# In jail.local [DEFAULT] section — overrides the EPEL default
+# (firewallcmd-rich-rules, set by 00-firewalld.conf)
 banaction = firewallcmd-ipset
 ```
 
@@ -229,16 +244,17 @@ banaction = firewallcmd-ipset
 
 ---
 
-## 6. firewallcmd-new — Rich Rules Action
+## 6. firewallcmd-rich-rules — The EPEL Default
 
 This action creates **one individual rich rule per banned IP** in firewalld.
-It's simpler to inspect but does not scale well.
+It is what `jail.d/00-firewalld.conf` configures as the default on RHEL 10.
+It's simple to inspect but does not scale as well as the ipset action.
 
 ```ini
 # In a specific jail, to use rich rules instead of ipset:
 [sshd]
 enabled   = true
-banaction = firewallcmd-new
+banaction = firewallcmd-rich-rules
 ```
 
 ### Verifying rich rule bans
@@ -249,15 +265,16 @@ sudo firewall-cmd --list-rich-rules
 ```
 
 ```
-rule family="ipv4" source address="185.220.101.5" port port="22" protocol="tcp" reject
-rule family="ipv4" source address="45.33.32.156" port port="22" protocol="tcp" reject
+rule family="ipv4" source address="185.220.101.5" port port="22" protocol="tcp" reject type="icmp-port-unreachable"
+rule family="ipv4" source address="45.33.32.156" port port="22" protocol="tcp" reject type="icmp-port-unreachable"
 ```
 
-### When to use firewallcmd-new
+### When to use firewallcmd-rich-rules
 
-- During development and testing (easier to see exactly what's blocked)
-- When you have very few active bans (<100)
+- When the EPEL defaults are good enough (most small/medium servers)
+- When you have relatively few active bans (hundreds, not thousands)
 - When you need to inspect individual ban rules easily
+- When you want to avoid the deprecated `--direct` interface entirely
 
 [↑ Back to TOC](#table-of-contents)
 
@@ -304,29 +321,28 @@ Action files use placeholder variables that fail2ban substitutes at runtime:
 | `<port>` | Port(s) from the jail config | `22` or `80,443` |
 | `<protocol>` | `tcp` or `udp` | `tcp` |
 | `<name>` | The jail name | `sshd` |
-| `<ipsetname>` | Auto-generated: `fail2ban-<name>` | `fail2ban-sshd` |
+| `<ipmset>` | Auto-generated ipset name: `f2b-<name>` | `f2b-sshd` |
 | `<bantime>` | Ban duration in seconds | `86400` |
-| `<zone>` | Firewalld zone | `public` |
-| `<blocktype>` | Block type (reject/drop) | `drop` |
+| `<maxelem>` | Max entries in the ipset | `65536` |
+| `<blocktype>` | Block type (REJECT/DROP) | `REJECT --reject-with icmp-port-unreachable` |
 
 ### Customising action parameters
 
-You can override these in your jail definition:
+You can pass parameters in square brackets on the `banaction` line:
 
 ```ini
 [sshd]
 enabled   = true
-banaction = firewallcmd-ipset
-# Override the firewalld zone for this jail
-firewallcmd-ipset[zone=drop]
+# Raise the ipset capacity for this jail
+banaction = firewallcmd-ipset[maxelem=131072]
 ```
 
-Or set them in an `[Init]` section of a custom action file:
+Or set them in an `[Init]` section of a `.local` override for the action file:
 
 ```ini
+# /etc/fail2ban/action.d/firewallcmd-ipset.local
 [Init]
-zone     = public
-blocktype = drop
+maxelem = 131072
 ```
 
 [↑ Back to TOC](#table-of-contents)
@@ -494,16 +510,20 @@ action  = firewallcmd-ipset[name=sshd, port=ssh, protocol=tcp]
 ```bash
 sudo tee /etc/fail2ban/action.d/custom-log.conf << 'EOF'
 [Definition]
-actionban   = echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) BAN   <name> <ip>" \
+actionban   = echo "$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ) BAN   <name> <ip>" \
                 >> /var/log/fail2ban-custom.log
 
-actionunban = echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) UNBAN <name> <ip>" \
+actionunban = echo "$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ) UNBAN <name> <ip>" \
                 >> /var/log/fail2ban-custom.log
 
 [Init]
 name = default
 EOF
 ```
+
+> **Note the `%%`:** literal `%` characters must be doubled in fail2ban
+> config files, otherwise the `%(...)s` interpolation parser chokes on them
+> (same rule as the webhook example above).
 
 [↑ Back to TOC](#table-of-contents)
 
@@ -519,32 +539,41 @@ cat /etc/fail2ban/action.d/firewallcmd-ipset.conf
 
 Identify: `actionstart`, `actionban`, `actionunban`, `actionstop`.
 
-### Step 2 — Check what ipsets currently exist
+> **Prerequisite:** the lab assumes `banaction = firewallcmd-ipset` in your
+> `jail.local` (set up in Module 04). If you are still on the EPEL default
+> (`firewallcmd-rich-rules`), use `firewall-cmd --list-rich-rules` wherever a
+> step inspects the ipset.
+
+### Step 2 — Check what fail2ban ipsets currently exist
 
 ```bash
-sudo firewall-cmd --get-ipsets
+sudo ipset list -n | grep f2b
 ```
 
-You should see `fail2ban-sshd` if the sshd jail is running.
+You should see `f2b-sshd` if the sshd jail is running.
 
 ### Step 3 — Inspect the sshd ipset
 
 ```bash
-sudo firewall-cmd --info-ipset=fail2ban-sshd
+sudo ipset list f2b-sshd
 ```
 
 ```
-fail2ban-sshd
-  type: hash:ip
-  options: timeout=86400 maxelem=65536
-  entries:
+Name: f2b-sshd
+Type: hash:ip
+Revision: 4
+Header: family inet hashsize 1024 maxelem 65536 timeout 0
+Size in memory: 208
+References: 1
+Number of entries: 0
+Members:
 ```
 
 ### Step 4 — Trigger a test ban and watch the action
 
-In one terminal, tail the fail2ban log:
+In one terminal, follow the fail2ban log:
 ```bash
-sudo tail -f /var/log/fail2ban.log
+sudo journalctl -u fail2ban -f
 ```
 
 In another terminal, trigger a manual ban:
@@ -555,21 +584,22 @@ sudo fail2ban-client set sshd banip 203.0.113.1
 ### Step 5 — Verify the action ran
 
 ```bash
-# Check ipset contains the banned IP
-sudo firewall-cmd --ipset=fail2ban-sshd --get-entries
+# Check the ipset contains the banned IP
+sudo ipset list f2b-sshd | grep -A5 "Members:"
 ```
 
 ```
+Members:
 203.0.113.1
 ```
 
 ```bash
-# Check the rich rule that references the ipset
-sudo firewall-cmd --list-rich-rules
+# Check the firewall rule that matches the ipset
+sudo firewall-cmd --direct --get-all-rules | grep f2b-sshd
 ```
 
 ```
-rule family="ipv4" source ipset="fail2ban-sshd" drop
+ipv4 filter INPUT_direct 0 -p tcp -m multiport --dports 22 -m set --match-set f2b-sshd src -j REJECT --reject-with icmp-port-unreachable
 ```
 
 ### Step 6 — Unban and verify cleanup
@@ -578,18 +608,22 @@ rule family="ipv4" source ipset="fail2ban-sshd" drop
 sudo fail2ban-client set sshd unbanip 203.0.113.1
 
 # Verify IP is gone from ipset
-sudo firewall-cmd --ipset=fail2ban-sshd --get-entries
+sudo ipset test f2b-sshd 203.0.113.1
+```
+
+```
+203.0.113.1 is NOT in set f2b-sshd.
 ```
 
 ### Step 7 — Check the log for action entries
 
 ```bash
-sudo grep "203.0.113.1" /var/log/fail2ban.log
+sudo journalctl -u fail2ban --no-pager | grep "203.0.113.1"
 ```
 
 ```
-2026-01-10 10:30:00,001 fail2ban.actions  [12346]: NOTICE  [sshd] Ban 203.0.113.1
-2026-01-10 10:30:15,002 fail2ban.actions  [12346]: NOTICE  [sshd] Unban 203.0.113.1
+Jan 10 10:30:00 server fail2ban-server[12346]: fail2ban.actions  [12346]: NOTICE  [sshd] Ban 203.0.113.1
+Jan 10 10:30:15 server fail2ban-server[12346]: fail2ban.actions  [12346]: NOTICE  [sshd] Unban 203.0.113.1
 ```
 
 ### Lab Complete ✓
@@ -613,10 +647,10 @@ In this module you learned:
 - What an **action** is: commands executed at ban/unban lifecycle events
 - **Action file structure**: `actionstart`, `actionban`, `actionunban`, `actionstop`
 - The **firewalld action files** available on RHEL 10:
-  - `firewallcmd-ipset` (recommended — scales to 100k+ IPs)
-  - `firewallcmd-new` (simple rich rules, good for testing)
+  - `firewallcmd-rich-rules` (EPEL default — one rich rule per IP, easy to inspect)
+  - `firewallcmd-ipset` (recommended at scale — kernel ipset, 100k+ IPs)
   - `firewallcmd-allports` (blocks ALL ports from banned IP)
-- **Action variables**: `<ip>`, `<port>`, `<name>`, `<ipsetname>`, etc.
+- **Action variables**: `<ip>`, `<port>`, `<name>`, `<ipmset>`, etc.
 - How to configure **email notifications** with MTA integration
 - How to **combine multiple actions** per jail
 - The **action_ shortcut presets** (`action_`, `action_mw`, `action_mwl`)

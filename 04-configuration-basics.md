@@ -173,12 +173,25 @@ findtime = 10m
 # Failures before ban
 maxretry = 5
 
-# On RHEL 10 with fail2ban-firewalld package:
-banaction = firewallcmd-ipset
-banaction_allports = firewallcmd-allports
+# Upstream default ban action (overridden on RHEL 10 — see below)
+banaction = iptables-multiport
 
-# Default backend
+# Default backend (overridden on RHEL 10 — see below)
 backend = auto
+```
+
+On RHEL 10, two EPEL drop-in files override these upstream defaults before
+your `jail.local` is even read:
+
+```ini
+# /etc/fail2ban/jail.d/00-firewalld.conf  (from fail2ban-firewalld)
+[DEFAULT]
+banaction = firewallcmd-rich-rules[actiontype=<multiport>]
+banaction_allports = firewallcmd-rich-rules[actiontype=<allports>]
+
+# /etc/fail2ban/jail.d/00-systemd.conf  (from fail2ban-systemd)
+[DEFAULT]
+backend = systemd
 ```
 
 [↑ Back to TOC](#table-of-contents)
@@ -224,11 +237,15 @@ maxretry = 5
 # -----------------------------------------------------------------------
 # RHEL 10 / firewalld settings
 # -----------------------------------------------------------------------
-# Use firewalld ipset for banning (recommended for RHEL 10)
+# The EPEL default (00-firewalld.conf) is firewallcmd-rich-rules: one rich
+# rule per banned IP. We override it with firewallcmd-ipset, which scales
+# much better under heavy attack (one kernel ipset per jail).
 banaction = firewallcmd-ipset
 banaction_allports = firewallcmd-allports
 
-# Use systemd journal backend for RHEL 10 services
+# systemd journal backend (already the EPEL default via 00-systemd.conf).
+# NOTE: any jail that reads a flat log file (Apache, Nginx, custom apps)
+# must override this per-jail with: backend = auto
 backend = systemd
 
 # -----------------------------------------------------------------------
@@ -295,10 +312,10 @@ bantime  = 1h      # How long bans last
 findtime = 10m     # Sliding window for counting failures
 maxretry = 5       # Failures within findtime to trigger ban
 
-# Incremental ban time (bans get longer for repeat offenders)
-# bantime.increment  = true
-# bantime.multiplier = 2
-# bantime.maxtime    = 1w
+# Incremental ban time (bans get longer for repeat offenders — see Module 10)
+# bantime.increment = true
+# bantime.factor    = 1    # default formula doubles each repeat offense
+# bantime.maxtime   = 1w
 
 # ── Ban action (firewalld) ─────────────────────────────────────────────────
 banaction          = firewallcmd-ipset        # Default: ban specific ports
@@ -426,12 +443,10 @@ maxretry = 5
 EOF
 ```
 
-### The 00-firewalld.conf file
+### The 00-firewalld.conf and 00-systemd.conf files
 
-When you install `fail2ban-firewalld`, a file is placed at:
-```
-/etc/fail2ban/jail.d/00-firewalld.conf
-```
+When you install `fail2ban-firewalld` and `fail2ban-systemd`, drop-in files
+are placed in `jail.d/`:
 
 ```bash
 cat /etc/fail2ban/jail.d/00-firewalld.conf
@@ -439,12 +454,23 @@ cat /etc/fail2ban/jail.d/00-firewalld.conf
 
 ```ini
 [DEFAULT]
-banaction = firewallcmd-ipset
-banaction_allports = firewallcmd-allports
+banaction = firewallcmd-rich-rules[actiontype=<multiport>]
+banaction_allports = firewallcmd-rich-rules[actiontype=<allports>]
 ```
 
-This file sets firewalld as the default ban action for all jails on RHEL 10.
-The `00-` prefix ensures it loads first and can be overridden by your files.
+```bash
+cat /etc/fail2ban/jail.d/00-systemd.conf
+```
+
+```ini
+[DEFAULT]
+backend = systemd
+```
+
+Together they make firewalld the default ban mechanism and journald the
+default log source for all jails on RHEL 10. The `00-` prefix ensures they
+load first and can be overridden by your files (which is exactly what our
+`jail.local` does when it sets `banaction = firewallcmd-ipset`).
 
 [↑ Back to TOC](#table-of-contents)
 
@@ -637,7 +663,6 @@ Replace `YOUR_IP_HERE` with your actual management IP:
 sudo tee /etc/fail2ban/jail.local << 'EOF'
 # =============================================================================
 # /etc/fail2ban/jail.local — RHEL 10 baseline configuration
-# Created: $(date +%Y-%m-%d)
 # =============================================================================
 
 [DEFAULT]
@@ -652,8 +677,10 @@ findtime = 10m
 maxretry = 5
 
 # --- RHEL 10 / firewalld ---
+# ipset-based banning (overrides the EPEL rich-rules default — scales better)
 banaction          = firewallcmd-ipset
 banaction_allports = firewallcmd-allports
+# journald backend; flat-file jails must override with backend = auto
 backend            = systemd
 encoding           = UTF-8
 
@@ -735,7 +762,8 @@ sudo fail2ban-client get sshd bantime
 86400
 ```
 
-(1 hour = 3600 seconds... wait, we set 24h = 86400 for sshd)
+The `[DEFAULT]` bantime is 1h (3600s), but the `[sshd]` jail overrides it
+with 24h — and 24 hours is 86400 seconds, confirming the override took effect.
 
 ### Lab Complete ✓
 
@@ -749,7 +777,7 @@ You now have a working `jail.local` that:
 **Self-check — verify you can answer yes to each:**
 
 - [ ] `sudo fail2ban-client -t` returns `OK: configuration test is successful`
-- [ ] `sudo fail2ban-client status sshd` shows `bantime = 86400` (24 hours in seconds)
+- [ ] `sudo fail2ban-client get sshd bantime` returns `86400` (24 hours in seconds)
 - [ ] `sudo fail2ban-client get sshd ignoreip` shows your management IP
 - [ ] I know the difference between editing `jail.conf` (never) and `jail.local` (always)
 - [ ] I can explain why `backend = systemd` is correct for RHEL 10
